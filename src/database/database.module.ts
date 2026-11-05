@@ -8,11 +8,14 @@ import { buildTypeOrmOptions } from './typeorm.options.js';
   imports: [
     TypeOrmModule.forRootAsync({
       inject: [ConfigService],
-      useFactory: (config: ConfigService<Env, true>) =>
-        buildTypeOrmOptions({
+      useFactory: (config: ConfigService<Env, true>) => ({
+        ...buildTypeOrmOptions({
           DATABASE_URL: config.get('DATABASE_URL', { infer: true }),
           DB_LOGGING: config.get('DB_LOGGING', { infer: true }),
         }),
+        entities: [],
+        autoLoadEntities: true,
+      }),
     }),
   ],
 })
