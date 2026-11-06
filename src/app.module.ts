@@ -6,6 +6,7 @@ import { CryptoModule } from './common/crypto/crypto.module.js';
 import { validateEnv } from './config/env.validation.js';
 import { DatabaseModule } from './database/database.module.js';
 import { HealthModule } from './health/health.module.js';
+import { MemoryModule } from './memory/memory.module.js';
 
 @Module({
   imports: [
@@ -18,6 +19,7 @@ import { HealthModule } from './health/health.module.js';
     CryptoModule,
     AuthModule,
     ChatModule,
+    MemoryModule,
     HealthModule,
   ],
 })

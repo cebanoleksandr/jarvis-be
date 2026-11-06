@@ -1,5 +1,4 @@
 import {
-  BadRequestException,
   Body,
   Controller,
   Delete,
@@ -14,6 +13,7 @@ import {
 import type { Response } from 'express';
 import { z } from 'zod';
 import { CurrentUserId } from '../auth/current-user.decorator.js';
+import { parseBody } from '../common/validation.js';
 import { ChatService } from './chat.service.js';
 import type { Conversation } from './conversation.entity.js';
 import type { Message } from './message.entity.js';
@@ -93,10 +93,7 @@ export class ChatController {
     @Body() body: unknown,
     @Res() res: Response,
   ) {
-    const parsed = sendMessageSchema.safeParse(body);
-    if (!parsed.success) {
-      throw new BadRequestException(z.flattenError(parsed.error).fieldErrors);
-    }
+    const { text } = parseBody(sendMessageSchema, body);
     // Ownership is checked before any headers go out, so errors stay plain JSON.
     const conversation = await this.chat.getOwnedConversation(userId, id);
 
@@ -119,7 +116,7 @@ export class ChatController {
       for await (const ev of this.chat.sendMessage(
         userId,
         conversation,
-        parsed.data.text,
+        text,
         abort.signal,
       )) {
         send(ev.event, ev.data);

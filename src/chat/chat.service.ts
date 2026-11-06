@@ -2,6 +2,8 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { LlmProvider } from '../llm/llm.types.js';
+import { GoalsService } from '../memory/goals.service.js';
+import { MemoriesService } from '../memory/memories.service.js';
 import { UsersService } from '../users/users.service.js';
 import { Conversation } from './conversation.entity.js';
 import { Message } from './message.entity.js';
@@ -27,6 +29,8 @@ export class ChatService {
     @InjectRepository(Message)
     private readonly messages: Repository<Message>,
     private readonly users: UsersService,
+    private readonly goals: GoalsService,
+    private readonly memories: MemoriesService,
     private readonly llm: LlmProvider,
   ) {}
 
@@ -72,8 +76,11 @@ export class ChatService {
     text: string,
     signal: AbortSignal,
   ): AsyncGenerator<ChatEvent> {
-    const user = await this.users.findById(userId);
-    if (!user) throw new NotFoundException('User not found');
+    const [profile, goals, memories] = await Promise.all([
+      this.users.getProfile(userId),
+      this.goals.list(userId),
+      this.memories.list(userId),
+    ]);
 
     const userMessage = await this.messages.save(
       this.messages.create({
@@ -91,7 +98,7 @@ export class ChatService {
     let partial = '';
     try {
       for await (const ev of this.llm.streamChat({
-        system: buildSystemPrompt(user),
+        system: buildSystemPrompt({ profile, goals, memories }),
         messages: history.map(({ role, content }) => ({ role, content })),
         signal,
       })) {
