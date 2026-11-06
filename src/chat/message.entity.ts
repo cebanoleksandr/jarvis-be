@@ -14,10 +14,17 @@ import { Conversation } from './conversation.entity.js';
 export type MessageRole = 'user' | 'assistant';
 
 @Entity('messages')
-@Index(['conversationId', 'createdAt'])
+@Index(['conversationId', 'seq'])
 export class Message {
   @PrimaryGeneratedColumn('uuid')
   id: string;
+
+  /**
+   * Insertion order. tool_use / tool_result pairs must be replayed in exact
+   * order, which timestamps cannot guarantee.
+   */
+  @Column({ type: 'bigint', generated: 'increment', select: false })
+  seq: string;
 
   @Column({ type: 'uuid' })
   conversationId: string;

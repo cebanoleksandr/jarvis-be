@@ -27,6 +27,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.6.0",
+    "@googleapis/calendar": "^20.1.0",
+    "@googleapis/tasks": "^17.1.0",
     "@nestjs/common": "^12.0.1",
     "@nestjs/config": "^12.1.0",
     "@nestjs/core": "^12.0.1",

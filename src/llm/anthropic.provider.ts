@@ -7,6 +7,7 @@ import {
   type ChatStreamEvent,
   type ContentBlock,
   LlmProvider,
+  type ToolCall,
 } from './llm.types.js';
 
 @Injectable()
@@ -41,6 +42,19 @@ export class AnthropicProvider extends LlmProvider {
         cache_control: { type: 'ephemeral' },
         system: req.system,
         messages: req.messages as Anthropic.Beta.BetaMessageParam[],
+        ...(req.tools?.length
+          ? {
+              tools: req.tools.map((t): Anthropic.Beta.BetaTool => ({
+                name: t.name,
+                description: t.description,
+                input_schema:
+                  t.inputSchema as Anthropic.Beta.BetaTool.InputSchema,
+                // Stream tool input as generated; inputs are validated
+                // against the tool's zod schema before anything runs.
+                eager_input_streaming: true,
+              })),
+            }
+          : {}),
       },
       { signal: req.signal },
     );
@@ -55,12 +69,21 @@ export class AnthropicProvider extends LlmProvider {
     }
 
     const message = await stream.finalMessage();
+    const content = sanitizeForHistory(
+      message.content as unknown as ContentBlock[],
+    );
+    const toolCalls: ToolCall[] = content
+      .filter((b) => b.type === 'tool_use')
+      .map((b) => ({
+        id: b.id as string,
+        name: b.name as string,
+        input: b.input,
+      }));
     yield {
       type: 'done',
       result: {
-        content: sanitizeForHistory(
-          message.content as unknown as ContentBlock[],
-        ),
+        content,
+        toolCalls,
         stopReason: message.stop_reason,
         model: message.model,
         usage: message.usage as unknown as Record<string, unknown>,

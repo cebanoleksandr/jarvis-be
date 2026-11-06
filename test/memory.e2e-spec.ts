@@ -23,6 +23,7 @@ class RecordingLlm extends LlmProvider {
       result: {
         content: [{ type: 'text', text: 'ok' }],
         stopReason: 'end_turn',
+        toolCalls: [],
         model: 'fake',
         usage: {},
       },

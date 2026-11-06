@@ -32,6 +32,7 @@ class FakeLlm extends LlmProvider {
           { type: 'text', text: this.chunks.join('') },
         ],
         stopReason: 'end_turn',
+        toolCalls: [],
         model: 'fake-model',
         usage: { input_tokens: 10, output_tokens: 2 },
         ...this.result,

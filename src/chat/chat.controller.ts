@@ -13,6 +13,7 @@ import {
 import type { Response } from 'express';
 import { z } from 'zod';
 import { CurrentUserId } from '../auth/current-user.decorator.js';
+import { streamSse } from '../common/sse.js';
 import { parseBody } from '../common/validation.js';
 import { ChatService } from './chat.service.js';
 import type { Conversation } from './conversation.entity.js';
@@ -84,7 +85,8 @@ export class ChatController {
   /**
    * Streams the reply as Server-Sent Events over the POST response
    * (consume with fetch + ReadableStream; EventSource is GET-only).
-   * Events: message_start, delta, done, error.
+   * Events: message_start, delta, tool_call, tool_result, action_required,
+   * done (stopReason `awaiting_confirmation` when a card needs a decision), error.
    */
   @Post(':id/messages')
   async send(
@@ -95,41 +97,11 @@ export class ChatController {
   ) {
     const { text } = parseBody(sendMessageSchema, body);
     // Ownership is checked before any headers go out, so errors stay plain JSON.
-    const conversation = await this.chat.getOwnedConversation(userId, id);
-
-    res.status(200).set({
-      'Content-Type': 'text/event-stream; charset=utf-8',
-      'Cache-Control': 'no-cache, no-transform',
-      Connection: 'keep-alive',
-      'X-Accel-Buffering': 'no',
-    });
-    res.flushHeaders();
-
-    const abort = new AbortController();
-    res.on('close', () => {
-      if (!res.writableFinished) abort.abort();
-    });
-    const send = (event: string, data: unknown) =>
-      res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-
-    try {
-      for await (const ev of this.chat.sendMessage(
-        userId,
-        conversation,
-        text,
-        abort.signal,
-      )) {
-        send(ev.event, ev.data);
-      }
-    } catch (err) {
-      if (!abort.signal.aborted) {
-        this.logger.error(`Chat stream failed: ${(err as Error).message}`);
-        send('error', {
-          message: 'The assistant failed to respond. Try again.',
-        });
-      }
-    } finally {
-      res.end();
-    }
+    await this.chat.getOwnedConversation(userId, id);
+    await streamSse(
+      res,
+      (signal) => this.chat.sendMessage(userId, id, text, signal),
+      this.logger,
+    );
   }
 }
