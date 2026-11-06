@@ -8,6 +8,7 @@ const valid = {
   GOOGLE_CALLBACK_URL: 'http://localhost:3000/api/auth/google/callback',
   TOKEN_ENC_KEY: randomBytes(32).toString('base64'),
   JWT_SECRET: 'x'.repeat(32),
+  ANTHROPIC_API_KEY: 'sk-test',
 };
 
 describe('validateEnv', () => {
@@ -17,6 +18,8 @@ describe('validateEnv', () => {
       PORT: 3000,
       DB_LOGGING: false,
       SESSION_TTL_DAYS: 7,
+      LLM_MODEL: 'claude-opus-5-5',
+      LLM_EFFORT: 'medium',
     });
   });
 

@@ -28,6 +28,13 @@ const envSchema = z.object({
   /** HMAC secret for session JWTs. */
   JWT_SECRET: z.string().min(32),
   SESSION_TTL_DAYS: z.coerce.number().int().positive().default(7),
+
+  ANTHROPIC_API_KEY: z.string().min(1),
+  LLM_MODEL: z.string().min(1).default('claude-opus-5-5'),
+  LLM_EFFORT: z
+    .enum(['low', 'medium', 'high', 'xhigh', 'max'])
+    .default('medium'),
+  LLM_MAX_TOKENS: z.coerce.number().int().positive().default(64000),
 });
 
 export type Env = z.infer<typeof envSchema>;
