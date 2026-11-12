@@ -23,6 +23,21 @@ describe('validateEnv', () => {
     });
   });
 
+  it('requires the key of the selected provider only', () => {
+    const { ANTHROPIC_API_KEY: _, ...noKey } = valid;
+    expect(() => validateEnv(noKey)).toThrow(/ANTHROPIC_API_KEY/);
+    expect(() => validateEnv({ ...noKey, LLM_PROVIDER: 'openrouter' })).toThrow(
+      /OPENROUTER_API_KEY/,
+    );
+    expect(
+      validateEnv({
+        ...noKey,
+        LLM_PROVIDER: 'openrouter',
+        OPENROUTER_API_KEY: 'sk-or-test',
+      }),
+    ).toMatchObject({ LLM_MODEL: 'openrouter/free' });
+  });
+
   it('rejects missing DATABASE_URL', () => {
     const { DATABASE_URL: _, ...rest } = valid;
     expect(() => validateEnv(rest)).toThrow(/DATABASE_URL/);

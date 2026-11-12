@@ -29,8 +29,12 @@ const envSchema = z.object({
   JWT_SECRET: z.string().min(32),
   SESSION_TTL_DAYS: z.coerce.number().int().positive().default(7),
 
-  ANTHROPIC_API_KEY: z.string().min(1),
-  LLM_MODEL: z.string().min(1).default('claude-opus-5-5'),
+  /** Which API answers chat requests. Each needs its own key below. */
+  LLM_PROVIDER: z.enum(['anthropic', 'openrouter']).default('anthropic'),
+  ANTHROPIC_API_KEY: z.string().min(1).optional(),
+  OPENROUTER_API_KEY: z.string().min(1).optional(),
+  /** Defaults to claude-opus-5-5 (anthropic) or openrouter/free (openrouter). */
+  LLM_MODEL: z.string().min(1).optional(),
   LLM_EFFORT: z
     .enum(['low', 'medium', 'high', 'xhigh', 'max'])
     .default('medium'),
@@ -43,10 +47,34 @@ const envSchema = z.object({
     .transform((v) => v === 'true'),
 });
 
-export type Env = z.infer<typeof envSchema>;
+const DEFAULT_MODELS = {
+  anthropic: 'claude-opus-5-5',
+  openrouter: 'openrouter/free',
+} as const;
+
+const checkedSchema = envSchema
+  .superRefine((env, ctx) => {
+    const key =
+      env.LLM_PROVIDER === 'openrouter'
+        ? 'OPENROUTER_API_KEY'
+        : 'ANTHROPIC_API_KEY';
+    if (!env[key]) {
+      ctx.addIssue({
+        code: 'custom',
+        path: [key],
+        message: `required when LLM_PROVIDER=${env.LLM_PROVIDER}`,
+      });
+    }
+  })
+  .transform((env) => ({
+    ...env,
+    LLM_MODEL: env.LLM_MODEL ?? DEFAULT_MODELS[env.LLM_PROVIDER],
+  }));
+
+export type Env = z.infer<typeof checkedSchema>;
 
 export function validateEnv(config: Record<string, unknown>): Env {
-  const result = envSchema.safeParse(config);
+  const result = checkedSchema.safeParse(config);
   if (!result.success) {
     throw new Error(
       `Invalid environment variables:\n${z.prettifyError(result.error)}`,
