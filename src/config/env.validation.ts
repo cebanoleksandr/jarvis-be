@@ -35,6 +35,12 @@ const envSchema = z.object({
     .enum(['low', 'medium', 'high', 'xhigh', 'max'])
     .default('medium'),
   LLM_MAX_TOKENS: z.coerce.number().int().positive().default(64000),
+
+  /** Morning briefings, evening check-ins and weekly reviews. Never runs under NODE_ENV=test. */
+  SCHEDULER_ENABLED: z
+    .enum(['true', 'false'])
+    .default('true')
+    .transform((v) => v === 'true'),
 });
 
 export type Env = z.infer<typeof envSchema>;

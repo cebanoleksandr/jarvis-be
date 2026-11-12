@@ -44,3 +44,37 @@ export function addDays(date: string, days: number): string {
   d.setUTCDate(d.getUTCDate() + days);
   return d.toISOString().slice(0, 10);
 }
+
+export interface LocalClock {
+  /** `YYYY-MM-DD` in the zone. */
+  date: string;
+  /** Minutes since local midnight. */
+  minutes: number;
+  /** 0 = Sunday ... 6 = Saturday. */
+  weekday: number;
+}
+
+const WEEKDAYS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+/** Wall-clock date, time of day and weekday in `tz` at `instant`. */
+export function localClock(instant: Date, tz: string): LocalClock {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat('en-US', {
+      timeZone: tz,
+      hourCycle: 'h23',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      weekday: 'short',
+    })
+      .formatToParts(instant)
+      .map((p) => [p.type, p.value]),
+  );
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    minutes: Number(parts.hour) * 60 + Number(parts.minute),
+    weekday: WEEKDAYS.indexOf(parts.weekday),
+  };
+}

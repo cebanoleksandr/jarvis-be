@@ -22,6 +22,10 @@ export class User {
   @Column({ type: 'varchar', length: 64, default: 'UTC' })
   timezone: string;
 
+  /** Last time the user sent a message or decided on an action. */
+  @Column({ type: 'timestamptz', nullable: true })
+  lastActiveAt: Date | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 

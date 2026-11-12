@@ -7,7 +7,10 @@ import {
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
 import { DataSource, EntityManager, Repository } from 'typeorm';
-import { Conversation } from '../chat/conversation.entity.js';
+import {
+  Conversation,
+  type ConversationKind,
+} from '../chat/conversation.entity.js';
 import { Message } from '../chat/message.entity.js';
 import {
   type ChatResult,
@@ -20,6 +23,7 @@ import {
 } from '../llm/llm.types.js';
 import { GoalsService } from '../memory/goals.service.js';
 import { MemoriesService } from '../memory/memories.service.js';
+import { User } from '../users/user.entity.js';
 import { UsersService } from '../users/users.service.js';
 import { PendingAction } from './pending-action.entity.js';
 import { buildSystemPrompt } from './system-prompt.js';
@@ -99,6 +103,7 @@ export class AgentService {
       conversation.title ??= text.slice(0, TITLE_MAX);
       conversation.updatedAt = new Date();
       await m.save(conversation);
+      await m.update(User, userId, { lastActiveAt: new Date() });
       return m.save(
         m.create(Message, {
           conversationId,
@@ -109,6 +114,53 @@ export class AgentService {
     });
     yield { event: 'message_start', data: { userMessageId: userMessage.id } };
     yield* this.run(userId, conversationId, signal);
+  }
+
+  /**
+   * Opens a conversation that starts with a prompt written by the app (a
+   * scheduled briefing) instead of the user. Run it with `runToCompletion`.
+   */
+  startAutomatedConversation(
+    userId: string,
+    opts: { kind: ConversationKind; title: string; prompt: string },
+  ): Promise<Conversation> {
+    return this.dataSource.transaction(async (m) => {
+      const conversation = await m.save(
+        m.create(Conversation, {
+          userId,
+          kind: opts.kind,
+          title: opts.title.slice(0, 200),
+        }),
+      );
+      await m.save(
+        m.create(Message, {
+          conversationId: conversation.id,
+          role: 'user',
+          content: [textBlock(opts.prompt)],
+          synthetic: true,
+        }),
+      );
+      return conversation;
+    });
+  }
+
+  /**
+   * Runs the agent with nobody listening (background jobs). Mutating calls
+   * still pause as pending actions and wait for the user in that conversation.
+   */
+  async runToCompletion(
+    userId: string,
+    conversationId: string,
+    signal: AbortSignal,
+  ): Promise<{ assistantMessageId: string | null; stopReason: string | null }> {
+    let done = {
+      assistantMessageId: null as string | null,
+      stopReason: null as string | null,
+    };
+    for await (const ev of this.run(userId, conversationId, signal)) {
+      if (ev.event === 'done') done = ev.data;
+    }
+    return done;
   }
 
   listPending(
@@ -172,6 +224,9 @@ export class AgentService {
       .execute();
     if (!claimed.affected)
       throw new ConflictException('Action is already resolved');
+    await this.dataSource.manager.update(User, userId, {
+      lastActiveAt: new Date(),
+    });
 
     if (decision.type === 'confirm') {
       const tool = this.registry.get(action.tool);

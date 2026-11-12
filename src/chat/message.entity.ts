@@ -40,6 +40,13 @@ export class Message {
   @Column({ type: 'jsonb' })
   content: ContentBlock[];
 
+  /**
+   * True for prompts written by the app (scheduled briefings), not the user.
+   * They are replayed to the model but should not be shown as user messages.
+   */
+  @Column({ type: 'boolean', default: false })
+  synthetic: boolean;
+
   /** Assistant only: `end_turn`, `max_tokens`, `aborted`, ... */
   @Column({ type: 'varchar', length: 32, nullable: true })
   stopReason: string | null;

@@ -26,11 +26,13 @@ const sendMessageSchema = z.object({
 const toConversationDto = ({
   id,
   title,
+  kind,
   createdAt,
   updatedAt,
 }: Conversation) => ({
   id,
   title,
+  kind,
   createdAt,
   updatedAt,
 });
@@ -39,12 +41,14 @@ const toMessageDto = ({
   id,
   role,
   content,
+  synthetic,
   stopReason,
   createdAt,
 }: Message) => ({
   id,
   role,
   content,
+  synthetic,
   stopReason,
   createdAt,
 });

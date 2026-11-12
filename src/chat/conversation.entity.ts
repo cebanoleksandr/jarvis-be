@@ -11,6 +11,8 @@ import {
 } from 'typeorm';
 import { User } from '../users/user.entity.js';
 
+export type ConversationKind = 'chat' | 'morning' | 'evening' | 'weekly';
+
 @Entity('conversations')
 @Index(['userId', 'updatedAt'])
 export class Conversation {
@@ -26,6 +28,10 @@ export class Conversation {
 
   @Column({ type: 'varchar', length: 200, nullable: true })
   title: string | null;
+
+  /** `chat` for ordinary dialogs, otherwise the briefing that opened it. */
+  @Column({ type: 'varchar', length: 16, default: 'chat' })
+  kind: ConversationKind;
 
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;

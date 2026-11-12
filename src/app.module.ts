@@ -7,6 +7,7 @@ import { validateEnv } from './config/env.validation.js';
 import { DatabaseModule } from './database/database.module.js';
 import { HealthModule } from './health/health.module.js';
 import { MemoryModule } from './memory/memory.module.js';
+import { SchedulerModule } from './scheduler/scheduler.module.js';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { MemoryModule } from './memory/memory.module.js';
     AuthModule,
     ChatModule,
     MemoryModule,
+    SchedulerModule,
     HealthModule,
   ],
 })
