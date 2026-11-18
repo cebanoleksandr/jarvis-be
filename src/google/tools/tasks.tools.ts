@@ -10,6 +10,48 @@ import {
 const truncate = (s: string | null | undefined, n: number) =>
   s && s.length > n ? `${s.slice(0, n)}…` : (s ?? undefined);
 
+export interface Task {
+  id: string;
+  title: string;
+  notes?: string;
+  /** Google Tasks keeps only the date part of `due`. */
+  due?: string;
+  status: 'needsAction' | 'completed';
+  completedAt?: string;
+  link?: string;
+}
+
+/** Tasks of the default list, at most 100. Open tasks only unless includeCompleted. */
+export async function fetchTasks(
+  google: GoogleClientService,
+  userId: string,
+  includeCompleted: boolean,
+): Promise<{ tasks: Task[]; truncated: boolean }> {
+  const api = new tasks_v1.Tasks({
+    auth: await google.forUser(userId, SCOPE_TASKS),
+  });
+  const res = await callGoogle(() =>
+    api.tasks.list({
+      tasklist: '@default',
+      showCompleted: includeCompleted,
+      showHidden: includeCompleted,
+      maxResults: 100,
+    }),
+  );
+  return {
+    tasks: (res.data.items ?? []).map((t) => ({
+      id: t.id ?? '',
+      title: t.title ?? '(no title)',
+      notes: truncate(t.notes, 500),
+      due: t.due?.slice(0, 10),
+      status: t.status === 'completed' ? 'completed' : 'needsAction',
+      completedAt: t.completed ?? undefined,
+      link: t.webViewLink ?? undefined,
+    })),
+    truncated: Boolean(res.data.nextPageToken),
+  };
+}
+
 export function tasksTools(google: GoogleClientService) {
   const api = async (userId: string) =>
     new tasks_v1.Tasks({ auth: await google.forUser(userId, SCOPE_TASKS) });
@@ -27,28 +69,8 @@ export function tasksTools(google: GoogleClientService) {
           .describe('Also return completed tasks'),
       })
       .strict(),
-    async execute({ userId }, { includeCompleted }) {
-      const api_ = await api(userId);
-      const res = await callGoogle(() =>
-        api_.tasks.list({
-          tasklist: '@default',
-          showCompleted: includeCompleted,
-          showHidden: includeCompleted,
-          maxResults: 100,
-        }),
-      );
-      return {
-        tasks: (res.data.items ?? []).map((t) => ({
-          id: t.id,
-          title: t.title ?? '(no title)',
-          notes: truncate(t.notes, 500),
-          // Google Tasks keeps only the date part of `due`.
-          due: t.due?.slice(0, 10),
-          status: t.status,
-        })),
-        truncated: Boolean(res.data.nextPageToken),
-      };
-    },
+    execute: ({ userId }, { includeCompleted }) =>
+      fetchTasks(google, userId, includeCompleted),
   });
 
   const createTask = defineTool({
@@ -96,5 +118,5 @@ export function tasksTools(google: GoogleClientService) {
     },
   });
 
-  return [listTasks, createTask];
+  return [listTasks, createTask] as const;
 }

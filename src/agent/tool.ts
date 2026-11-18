@@ -39,7 +39,15 @@ export function defineTool<S extends z.ZodType>(
 }
 
 /** An error whose message is safe to show to the model and the user. */
-export class ToolError extends Error {}
+export class ToolError extends Error {
+  /** True when only signing in with Google again can fix it. */
+  readonly reauthRequired: boolean;
+
+  constructor(message: string, options: { reauthRequired?: boolean } = {}) {
+    super(message);
+    this.reauthRequired = options.reauthRequired ?? false;
+  }
+}
 
 export function toJsonSchema(schema: z.ZodType): Record<string, unknown> {
   const { $schema: _, ...json } = z.toJSONSchema(schema, {

@@ -15,6 +15,70 @@ const DATE_OR_DATETIME = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?$/;
 const truncate = (s: string | null | undefined, n: number) =>
   s && s.length > n ? `${s.slice(0, n)}…` : (s ?? undefined);
 
+/** A range of days in the user's timezone; shared by the tool and the REST endpoint. */
+export const eventsRangeSchema = z
+  .object({
+    from: z.string().regex(DATE).describe('First day, YYYY-MM-DD'),
+    to: z.string().regex(DATE).describe('Last day (inclusive), YYYY-MM-DD'),
+  })
+  .strict()
+  .refine((v) => v.to >= v.from, 'to must not be before from')
+  .refine(
+    // zod still runs object refinements after a field failed its regex.
+    (v) => !DATE.test(v.from) || v.to <= addDays(v.from, MAX_RANGE_DAYS - 1),
+    `Range is limited to ${MAX_RANGE_DAYS} days`,
+  );
+
+export interface CalendarEvent {
+  id: string;
+  title: string;
+  /** Local date-time with offset, or `YYYY-MM-DD` for all-day events. */
+  start: string;
+  /** For all-day events the day after the last one (Google's exclusive end). */
+  end: string;
+  allDay: boolean;
+  location?: string;
+  description?: string;
+  link?: string;
+}
+
+/** Events of the primary calendar, ordered by start, at most 100. */
+export async function fetchEvents(
+  google: GoogleClientService,
+  userId: string,
+  timezone: string,
+  { from, to }: z.output<typeof eventsRangeSchema>,
+): Promise<{ timezone: string; events: CalendarEvent[]; truncated: boolean }> {
+  const cal = new calendar_v3.Calendar({
+    auth: await google.forUser(userId, SCOPE_CALENDAR_EVENTS),
+  });
+  const res = await callGoogle(() =>
+    cal.events.list({
+      calendarId: 'primary',
+      timeMin: zonedToUtc(from, timezone).toISOString(),
+      timeMax: zonedToUtc(addDays(to, 1), timezone).toISOString(),
+      timeZone: timezone,
+      singleEvents: true,
+      orderBy: 'startTime',
+      maxResults: 100,
+    }),
+  );
+  return {
+    timezone,
+    events: (res.data.items ?? []).map((e) => ({
+      id: e.id ?? '',
+      title: e.summary ?? '(no title)',
+      start: e.start?.dateTime ?? e.start?.date ?? '',
+      end: e.end?.dateTime ?? e.end?.date ?? '',
+      allDay: Boolean(e.start?.date),
+      location: e.location ?? undefined,
+      description: truncate(e.description, 500),
+      link: e.htmlLink ?? undefined,
+    })),
+    truncated: Boolean(res.data.nextPageToken),
+  };
+}
+
 export function calendarTools(google: GoogleClientService) {
   const api = async (userId: string) =>
     new calendar_v3.Calendar({
@@ -28,45 +92,9 @@ export function calendarTools(google: GoogleClientService) {
       "Days are in the user's timezone; times in the result are local to that timezone. " +
       `At most ${MAX_RANGE_DAYS} days per call.`,
     mutating: false,
-    input: z
-      .object({
-        from: z.string().regex(DATE).describe('First day, YYYY-MM-DD'),
-        to: z.string().regex(DATE).describe('Last day (inclusive), YYYY-MM-DD'),
-      })
-      .strict()
-      .refine((v) => v.to >= v.from, 'to must not be before from')
-      .refine(
-        (v) => v.to <= addDays(v.from, MAX_RANGE_DAYS - 1),
-        `Range is limited to ${MAX_RANGE_DAYS} days`,
-      ),
-    async execute({ userId, timezone }, { from, to }) {
-      const cal = await api(userId);
-      const res = await callGoogle(() =>
-        cal.events.list({
-          calendarId: 'primary',
-          timeMin: zonedToUtc(from, timezone).toISOString(),
-          timeMax: zonedToUtc(addDays(to, 1), timezone).toISOString(),
-          timeZone: timezone,
-          singleEvents: true,
-          orderBy: 'startTime',
-          maxResults: 100,
-        }),
-      );
-      const items = res.data.items ?? [];
-      return {
-        timezone,
-        events: items.map((e) => ({
-          id: e.id,
-          title: e.summary ?? '(no title)',
-          start: e.start?.dateTime ?? e.start?.date,
-          end: e.end?.dateTime ?? e.end?.date,
-          allDay: Boolean(e.start?.date),
-          location: e.location ?? undefined,
-          description: truncate(e.description, 500),
-        })),
-        truncated: Boolean(res.data.nextPageToken),
-      };
-    },
+    input: eventsRangeSchema,
+    execute: ({ userId, timezone }, range) =>
+      fetchEvents(google, userId, timezone, range),
   });
 
   const createEvent = defineTool({
@@ -143,5 +171,5 @@ export function calendarTools(google: GoogleClientService) {
     },
   });
 
-  return [getEvents, createEvent];
+  return [getEvents, createEvent] as const;
 }

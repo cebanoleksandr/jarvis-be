@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { AccountModule } from './account/account.module.js';
 import { AuthModule } from './auth/auth.module.js';
 import { ChatModule } from './chat/chat.module.js';
 import { CryptoModule } from './common/crypto/crypto.module.js';
@@ -19,6 +20,7 @@ import { SchedulerModule } from './scheduler/scheduler.module.js';
     DatabaseModule,
     CryptoModule,
     AuthModule,
+    AccountModule,
     ChatModule,
     MemoryModule,
     SchedulerModule,

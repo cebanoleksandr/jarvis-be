@@ -23,6 +23,12 @@ describe('calendar tools', () => {
     ).toBe(false);
   });
 
+  it('get_events rejects malformed dates without throwing', () => {
+    expect(
+      getEvents.input.safeParse({ from: 'tomorrow', to: '2026-11-01' }).success,
+    ).toBe(false);
+  });
+
   it('create_event validates times and summarizes for the confirmation card', () => {
     const ok = createEvent.input.safeParse({
       title: 'Dentist',

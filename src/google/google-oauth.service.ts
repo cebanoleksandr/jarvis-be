@@ -59,6 +59,23 @@ export class GoogleOAuthService {
     return { url, codeVerifier };
   }
 
+  /**
+   * Revokes the grant behind a token (refresh or access) at Google, so the
+   * app disappears from the user's Google account permissions.
+   */
+  async revoke(token: string): Promise<void> {
+    const res = await fetch('https://oauth2.googleapis.com/revoke', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ token }),
+      signal: AbortSignal.timeout(5000),
+    });
+    // 400 invalid_token: already revoked or expired, which is the goal anyway.
+    if (!res.ok && res.status !== 400) {
+      throw new Error(`Google revoke failed with ${res.status}`);
+    }
+  }
+
   async exchangeCode(
     code: string,
     codeVerifier: string,

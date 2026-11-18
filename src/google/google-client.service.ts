@@ -36,11 +36,14 @@ export class GoogleClientService {
   async forUser(userId: string, requiredScope: string): Promise<OAuth2Client> {
     const account = await this.accounts.findOneBy({ userId });
     if (!account) {
-      throw new ToolError(`No Google account is connected. ${REAUTH_HINT}`);
+      throw new ToolError(`No Google account is connected. ${REAUTH_HINT}`, {
+        reauthRequired: true,
+      });
     }
     if (!account.scopes.includes(requiredScope)) {
       throw new ToolError(
         `The user has not granted access to ${SCOPE_LABELS[requiredScope] ?? requiredScope}. ${REAUTH_HINT}`,
+        { reauthRequired: true },
       );
     }
 
@@ -89,6 +92,7 @@ export async function callGoogle<T>(fn: () => Promise<T>): Promise<T> {
     if (oauthError === 'invalid_grant' || status === 401) {
       throw new ToolError(
         `Google access has expired or was revoked. ${REAUTH_HINT}`,
+        { reauthRequired: true },
       );
     }
     if (status === 403) {
