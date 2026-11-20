@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  HttpCode,
   Logger,
   Param,
   ParseUUIDPipe,
@@ -11,6 +12,7 @@ import {
 import type { Response } from 'express';
 import { z } from 'zod';
 import { CurrentUserId } from '../auth/current-user.decorator.js';
+import { fromGoogle } from '../google/google-errors.js';
 import { streamSse } from '../common/sse.js';
 import { parseBody } from '../common/validation.js';
 import { AgentService, type Decision, toActionDto } from './agent.service.js';
@@ -28,13 +30,27 @@ export class PendingActionsController {
 
   constructor(private readonly agent: AgentService) {}
 
-  /** Open confirmation cards for a conversation (e.g. after a page reload). */
+  /** All confirmation cards of a conversation, open and decided. */
   @Get('conversations/:id/pending-actions')
   async list(
     @CurrentUserId() userId: string,
     @Param('id', ParseUUIDPipe) id: string,
   ) {
-    return (await this.agent.listPending(userId, id)).map(toActionDto);
+    return (await this.agent.listActions(userId, id)).map(toActionDto);
+  }
+
+  /**
+   * Reverts an executed action (deletes the created event or task).
+   * 409 unless it is executed and its tool supports undo; Google errors as
+   * 409 `google_reauth_required` or 502.
+   */
+  @Post('pending-actions/:id/undo')
+  @HttpCode(200)
+  async undo(
+    @CurrentUserId() userId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return toActionDto(await fromGoogle(() => this.agent.undo(userId, id)));
   }
 
   /** Runs the action (optionally with edited args) and streams the continued reply. */

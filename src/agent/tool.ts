@@ -25,6 +25,11 @@ export interface ToolDefinition<S extends z.ZodType = z.ZodType> {
   execute(ctx: ToolContext, input: z.output<S>): Promise<unknown>;
   /** Required for mutating tools. */
   summarize?(input: z.output<S>): ActionSummary;
+  /**
+   * Reverts a successful run, given what `execute` returned. Only for
+   * mutating tools; the user triggers it from the resolved card.
+   */
+  undo?(ctx: ToolContext, result: unknown): Promise<void>;
 }
 
 export type AnyTool = ToolDefinition<any>;
@@ -34,6 +39,9 @@ export function defineTool<S extends z.ZodType>(
 ): ToolDefinition<S> {
   if (def.mutating && !def.summarize) {
     throw new Error(`Mutating tool ${def.name} needs summarize()`);
+  }
+  if (!def.mutating && def.undo) {
+    throw new Error(`Read-only tool ${def.name} cannot have undo()`);
   }
   return def;
 }

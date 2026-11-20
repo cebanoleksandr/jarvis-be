@@ -17,9 +17,16 @@ import type { ActionSummary } from './tool.js';
  * pending -> executing -> executed | failed   (user confirmed)
  * pending -> cancelled                        (user declined)
  * pending -> dismissed                        (user wrote a new message instead)
+ * executed -> undone                          (user pressed Undo afterwards)
  */
 export type PendingActionStatus =
-  'pending' | 'executing' | 'executed' | 'failed' | 'cancelled' | 'dismissed';
+  | 'pending'
+  | 'executing'
+  | 'executed'
+  | 'failed'
+  | 'cancelled'
+  | 'dismissed'
+  | 'undone';
 
 /**
  * One tool call from an assistant turn that was paused for confirmation.

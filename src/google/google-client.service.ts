@@ -76,6 +76,34 @@ export class GoogleClientService {
   }
 }
 
+const statusOf = (err: unknown) => {
+  const e = err as { status?: number; response?: { status?: number } };
+  return e.status ?? e.response?.status;
+};
+
+/**
+ * Deletes something in Google for an Undo. Already gone (404/410, e.g. the
+ * user deleted it by hand) counts as success; other failures map like callGoogle.
+ */
+export async function removeFromGoogle(fn: () => Promise<unknown>) {
+  try {
+    await fn();
+  } catch (err) {
+    const status = statusOf(err);
+    if (status === 404 || status === 410) return;
+    await callGoogle(() => Promise.reject(err));
+  }
+}
+
+/** The `id` a create tool returned, needed to undo it. */
+export function createdId(result: unknown): string {
+  const id = (result as { id?: unknown } | null)?.id;
+  if (typeof id !== 'string' || !id) {
+    throw new ToolError('There is nothing to undo for this action.');
+  }
+  return id;
+}
+
 /** Runs a Google API call and turns failures into messages the model can act on. */
 export async function callGoogle<T>(fn: () => Promise<T>): Promise<T> {
   try {

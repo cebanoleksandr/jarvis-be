@@ -65,6 +65,31 @@ describe('calendar tools', () => {
       expect(createEvent.input.safeParse(input).success).toBe(false);
   });
 
+  it('create_event accepts an optional reminder within four weeks', () => {
+    const base = {
+      title: 'Dentist',
+      start: '2026-11-07T10:00',
+      end: '2026-11-07T11:00',
+    };
+    const v = createEvent.input.parse({ ...base, reminderMinutes: 15 });
+    expect(createEvent.summarize!(v).details.Reminder).toBe('15 min before');
+    expect(
+      createEvent.summarize!(createEvent.input.parse(base)).details,
+    ).not.toHaveProperty('Reminder');
+    for (const reminderMinutes of [-1, 1.5, 40321, '15']) {
+      expect(
+        createEvent.input.safeParse({ ...base, reminderMinutes }).success,
+      ).toBe(false);
+    }
+  });
+
+  it('create tools can be undone, read-only tools cannot', () => {
+    expect('undo' in createEvent).toBe(true);
+    expect('undo' in createTask).toBe(true);
+    expect('undo' in getEvents).toBe(false);
+    expect('undo' in listTasks).toBe(false);
+  });
+
   it('create_event supports all-day events', () => {
     const v = createEvent.input.parse({
       title: 'Trip',
@@ -120,5 +145,25 @@ describe('toJsonSchema', () => {
       required: ['title'],
     });
     expect(schema).not.toHaveProperty('$schema');
+  });
+});
+
+describe('undo helpers', () => {
+  it('createdId needs the id a create tool returned', async () => {
+    const { createdId } = await import('../google-client.service.js');
+    expect(createdId({ id: 'abc', link: 'x' })).toBe('abc');
+    expect(() => createdId(null)).toThrow(/nothing to undo/);
+    expect(() => createdId({ id: '' })).toThrow(/nothing to undo/);
+  });
+
+  it('removeFromGoogle treats an already deleted item as done', async () => {
+    const { removeFromGoogle } = await import('../google-client.service.js');
+    const gone = (status: number) => () =>
+      Promise.reject(Object.assign(new Error('gone'), { status }));
+    await expect(removeFromGoogle(gone(404))).resolves.toBeUndefined();
+    await expect(removeFromGoogle(gone(410))).resolves.toBeUndefined();
+    await expect(removeFromGoogle(gone(401))).rejects.toMatchObject({
+      reauthRequired: true,
+    });
   });
 });

@@ -22,6 +22,9 @@ import { User } from './../src/users/user.entity.js';
 
 // ---------- test tools (stand-ins for Google) ----------
 const executed: { tool: string; userId: string; input: unknown }[] = [];
+const undone: { userId: string; result: unknown }[] = [];
+/** Set to make the next undo fail like Google would. */
+let undoError: Error | null = null;
 const testTools = [
   defineTool({
     name: 'lookup',
@@ -54,6 +57,20 @@ const testTools = [
     async execute(ctx, input) {
       executed.push({ tool: 'make_note', userId: ctx.userId, input });
       return { created: input.title };
+    },
+    async undo(ctx, result) {
+      if (undoError) throw undoError;
+      undone.push({ userId: ctx.userId, result });
+    },
+  }),
+  defineTool({
+    name: 'send_ping',
+    description: 'Mutating, cannot be undone',
+    mutating: true,
+    input: z.object({}).strict(),
+    summarize: () => ({ title: 'Ping', details: {} }),
+    async execute() {
+      return { pinged: true };
     },
   }),
 ];
@@ -166,6 +183,8 @@ describe('Agent loop and confirmations (e2e)', () => {
     llm.script = [];
     llm.requests = [];
     executed.length = 0;
+    undone.length = 0;
+    undoError = null;
   });
 
   afterEach(() => {
@@ -219,6 +238,7 @@ describe('Agent loop and confirmations (e2e)', () => {
       'broken',
       'lookup',
       'make_note',
+      'send_ping',
     ]);
     const results = llm.lastMessages().at(-1)!;
     expect(results.role).toBe('user');
@@ -471,6 +491,87 @@ describe('Agent loop and confirmations (e2e)', () => {
     expect(events.at(-1)!.data).toEqual({
       assistantMessageId: null,
       stopReason: 'max_steps',
+    });
+  });
+
+  describe('undo', () => {
+    const undo = (actionId: string, cookie = alice) =>
+      http()
+        .post(`/api/pending-actions/${actionId}/undo`)
+        .set('Cookie', cookie);
+
+    /** Runs make_note through confirmation and returns the executed action. */
+    async function executedNote(title = 'Buy milk') {
+      const id = await newConversation();
+      llm.script = [callStep(toolUse('n1', 'make_note', { title }))];
+      const action = (await say(id, 'note it')).find(
+        (e) => e.event === 'action_required',
+      )!.data;
+      llm.script = [finalStep('Noted.')];
+      await decide(action.id, 'confirm').expect(200);
+      return { conversationId: id, actionId: action.id as string };
+    }
+
+    it('lists decided actions too, then reverts an executed one once', async () => {
+      const { conversationId, actionId } = await executedNote();
+
+      const list = await http()
+        .get(`/api/conversations/${conversationId}/pending-actions`)
+        .set('Cookie', alice)
+        .expect(200);
+      expect(list.body).toMatchObject([{ id: actionId, status: 'executed' }]);
+
+      const res = await undo(actionId).expect(200);
+      expect(res.body).toMatchObject({ id: actionId, status: 'undone' });
+      expect(undone).toEqual([
+        { userId: aliceId, result: { created: 'Buy milk' } },
+      ]);
+
+      // Second click: nothing left to undo.
+      await undo(actionId).expect(409);
+      expect(undone).toHaveLength(1);
+    });
+
+    it('refuses pending, foreign and non-undoable actions', async () => {
+      const id = await newConversation();
+      llm.script = [callStep(toolUse('n1', 'make_note', { title: 'x' }))];
+      const pending = (await say(id, 'note')).find(
+        (e) => e.event === 'action_required',
+      )!.data;
+      await undo(pending.id).expect(409);
+      llm.script = [finalStep()];
+      await decide(pending.id, 'cancel').expect(200);
+      await undo(pending.id).expect(409); // cancelled
+
+      const { actionId } = await executedNote();
+      await undo(actionId, bob).expect(404);
+
+      const id2 = await newConversation();
+      llm.script = [callStep(toolUse('p1', 'send_ping', {}))];
+      const ping = (await say(id2, 'ping')).find(
+        (e) => e.event === 'action_required',
+      )!.data;
+      llm.script = [finalStep()];
+      await decide(ping.id, 'confirm').expect(200);
+      const res = await undo(ping.id).expect(409);
+      expect(res.body.message).toMatch(/cannot be undone/);
+      expect(undone).toEqual([]);
+    });
+
+    it('keeps the action executed when Google fails', async () => {
+      const { actionId } = await executedNote();
+
+      undoError = new ToolError('Google access has expired or was revoked.', {
+        reauthRequired: true,
+      });
+      const reauth = await undo(actionId).expect(409);
+      expect(reauth.body.code).toBe('google_reauth_required');
+
+      undoError = new ToolError('Google denied the request');
+      await undo(actionId).expect(502);
+
+      undoError = null;
+      await undo(actionId).expect(200);
     });
   });
 });

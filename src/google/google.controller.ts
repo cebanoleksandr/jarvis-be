@@ -1,6 +1,4 @@
 import {
-  BadGatewayException,
-  ConflictException,
   Controller,
   Delete,
   Get,
@@ -9,13 +7,13 @@ import {
   Query,
 } from '@nestjs/common';
 import { z } from 'zod';
-import { ToolError } from '../agent/tool.js';
 import { CurrentUserId } from '../auth/current-user.decorator.js';
 import { localClock } from '../common/time.js';
 import { parseBody } from '../common/validation.js';
 import { UsersService } from '../users/users.service.js';
 import { GoogleConnectionService } from './google-connection.service.js';
 import { GoogleDataService } from './google-data.service.js';
+import { fromGoogle } from './google-errors.js';
 import { eventsRangeSchema } from './tools/calendar.tools.js';
 
 const tasksQuerySchema = z
@@ -71,24 +69,5 @@ export class GoogleController {
   @HttpCode(204)
   disconnect(@CurrentUserId() userId: string) {
     return this.connection.disconnect(userId);
-  }
-}
-
-/**
- * 409 `google_reauth_required` when the user must sign in with Google again
- * (not connected, scope not granted, token revoked); 502 for other Google failures.
- */
-async function fromGoogle<T>(fn: () => Promise<T>): Promise<T> {
-  try {
-    return await fn();
-  } catch (err) {
-    if (!(err instanceof ToolError)) throw err;
-    if (err.reauthRequired) {
-      throw new ConflictException({
-        message: err.message,
-        code: 'google_reauth_required',
-      });
-    }
-    throw new BadGatewayException({ message: err.message });
   }
 }

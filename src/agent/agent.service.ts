@@ -163,14 +163,46 @@ export class AgentService {
     return done;
   }
 
-  listPending(
+  /**
+   * Every confirmation card of a conversation, open or decided, so the chat
+   * can show resolved cards (with Undo) after a reload too.
+   */
+  listActions(
     userId: string,
     conversationId: string,
   ): Promise<PendingAction[]> {
     return this.actions.find({
-      where: { userId, conversationId, mutating: true, status: 'pending' },
+      where: { userId, conversationId, mutating: true },
       order: { createdAt: 'ASC' },
     });
+  }
+
+  /**
+   * Reverts an executed action through its tool's `undo` (e.g. deletes the
+   * created event). It is the user's own click, so no further confirmation.
+   * Google failures surface as ToolError.
+   */
+  async undo(userId: string, actionId: string): Promise<PendingAction> {
+    const action = await this.actions.findOneBy({
+      id: actionId,
+      userId,
+      mutating: true,
+    });
+    if (!action) throw new NotFoundException('Action not found');
+    if (action.status !== 'executed') {
+      throw new ConflictException(`Action is ${action.status}, not executed`);
+    }
+    const tool = this.registry.get(action.tool);
+    if (!tool?.undo) {
+      throw new ConflictException('This action cannot be undone');
+    }
+    await tool.undo(await this.toolContext(userId), action.result);
+    // A parallel Undo hits an already deleted item, which counts as done.
+    await this.actions.update(
+      { id: action.id, status: 'executed' },
+      { status: 'undone' },
+    );
+    return this.actions.findOneByOrFail({ id: action.id });
   }
 
   /** All checks that can fail with a plain HTTP error, before streaming starts. */

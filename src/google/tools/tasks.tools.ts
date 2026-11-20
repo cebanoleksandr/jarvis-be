@@ -3,7 +3,9 @@ import { z } from 'zod';
 import { defineTool } from '../../agent/tool.js';
 import {
   callGoogle,
+  createdId,
   type GoogleClientService,
+  removeFromGoogle,
   SCOPE_TASKS,
 } from '../google-client.service.js';
 
@@ -115,6 +117,13 @@ export function tasksTools(google: GoogleClientService) {
         due: res.data.due?.slice(0, 10),
         link: res.data.webViewLink,
       };
+    },
+    async undo({ userId }, result) {
+      const task = createdId(result);
+      const api_ = await api(userId);
+      await removeFromGoogle(() =>
+        api_.tasks.delete({ tasklist: '@default', task }),
+      );
     },
   });
 

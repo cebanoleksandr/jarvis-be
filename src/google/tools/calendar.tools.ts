@@ -4,11 +4,15 @@ import { defineTool } from '../../agent/tool.js';
 import { addDays, zonedToUtc } from '../../common/time.js';
 import {
   callGoogle,
+  createdId,
   type GoogleClientService,
+  removeFromGoogle,
   SCOPE_CALENDAR_EVENTS,
 } from '../google-client.service.js';
 
 const MAX_RANGE_DAYS = 31;
+/** Google Calendar allows reminders up to four weeks ahead. */
+const MAX_REMINDER_MINUTES = 40320;
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 const DATE_OR_DATETIME = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2})?$/;
 
@@ -102,7 +106,8 @@ export function calendarTools(google: GoogleClientService) {
     description:
       "Create an event in the user's primary Google Calendar. Requires the user's confirmation " +
       'before it runs. Use local wall-clock times in the user timezone (YYYY-MM-DDTHH:MM). ' +
-      'For an all-day event give dates only (YYYY-MM-DD); end is the last day, inclusive.',
+      'For an all-day event give dates only (YYYY-MM-DD); end is the last day, inclusive. ' +
+      'Set reminderMinutes only when the user asks for a reminder; otherwise the calendar default applies.',
     mutating: true,
     input: z
       .object({
@@ -117,6 +122,13 @@ export function calendarTools(google: GoogleClientService) {
           .describe('YYYY-MM-DDTHH:MM or YYYY-MM-DD'),
         description: z.string().max(4000).optional(),
         location: z.string().max(500).optional(),
+        reminderMinutes: z
+          .number()
+          .int()
+          .min(0)
+          .max(MAX_REMINDER_MINUTES)
+          .optional()
+          .describe('Popup reminder this many minutes before the start'),
       })
       .strict()
       .refine(
@@ -139,6 +151,9 @@ export function calendarTools(google: GoogleClientService) {
             : `${v.start.replace('T', ' ')} – ${v.end.replace('T', ' ')}`,
         ...(v.location ? { Location: v.location } : {}),
         ...(v.description ? { Description: v.description } : {}),
+        ...(v.reminderMinutes !== undefined
+          ? { Reminder: `${v.reminderMinutes} min before` }
+          : {}),
       },
     }),
     async execute({ userId, timezone }, v) {
@@ -158,6 +173,15 @@ export function calendarTools(google: GoogleClientService) {
             end: allDay
               ? { date: addDays(v.end, 1) }
               : { dateTime: `${v.end}:00`, timeZone: timezone },
+            reminders:
+              v.reminderMinutes === undefined
+                ? undefined
+                : {
+                    useDefault: false,
+                    overrides: [
+                      { method: 'popup', minutes: v.reminderMinutes },
+                    ],
+                  },
           },
         }),
       );
@@ -168,6 +192,13 @@ export function calendarTools(google: GoogleClientService) {
         end: res.data.end?.dateTime ?? res.data.end?.date,
         link: res.data.htmlLink,
       };
+    },
+    async undo({ userId }, result) {
+      const eventId = createdId(result);
+      const cal = await api(userId);
+      await removeFromGoogle(() =>
+        cal.events.delete({ calendarId: 'primary', eventId }),
+      );
     },
   });
 
