@@ -50,6 +50,22 @@ export class ChatService {
     });
   }
 
+  /** Sets a title chosen by the user; the list order does not change. */
+  async rename(
+    userId: string,
+    id: string,
+    title: string,
+  ): Promise<Conversation> {
+    const conversation = await this.getOwnedConversation(userId, id);
+    await this.conversations
+      .createQueryBuilder()
+      .update()
+      .set({ title, customTitle: true, updatedAt: () => '"updatedAt"' })
+      .where('id = :id', { id })
+      .execute();
+    return Object.assign(conversation, { title, customTitle: true });
+  }
+
   /** Marks the conversation as seen; keeps the first time it was read. */
   async markRead(userId: string, id: string): Promise<void> {
     const conversation = await this.getOwnedConversation(userId, id);

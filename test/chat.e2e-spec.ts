@@ -278,6 +278,42 @@ describe('Chat (e2e)', () => {
     ).toBe(after.readAt!.getTime());
   });
 
+  it('renames a conversation without reordering it', async () => {
+    const id = await newConversation();
+    const before = await db.getRepository(Conversation).findOneByOrFail({ id });
+
+    const res = await http()
+      .patch(`/api/conversations/${id}`)
+      .set('Cookie', sessions[0])
+      .send({ title: '  Launch plan  ' })
+      .expect(200);
+    expect(res.body).toMatchObject({ title: 'Launch plan', customTitle: true });
+
+    const after = await db.getRepository(Conversation).findOneByOrFail({ id });
+    expect(after.title).toBe('Launch plan');
+    expect(after.updatedAt.getTime()).toBe(before.updatedAt.getTime());
+
+    // The first message no longer names the chat once the user did.
+    await http()
+      .post(`/api/conversations/${id}/messages`)
+      .set('Cookie', sessions[0])
+      .send({ text: 'hello there' });
+    expect(
+      (await db.getRepository(Conversation).findOneByOrFail({ id })).title,
+    ).toBe('Launch plan');
+
+    await http()
+      .patch(`/api/conversations/${id}`)
+      .set('Cookie', sessions[0])
+      .send({ title: '   ' })
+      .expect(400);
+    await http()
+      .patch(`/api/conversations/${id}`)
+      .set('Cookie', sessions[1])
+      .send({ title: 'mine now' })
+      .expect(404);
+  });
+
   it('deletes a conversation with its messages', async () => {
     const id = await newConversation();
     await http()

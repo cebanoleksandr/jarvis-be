@@ -7,6 +7,7 @@ import {
   Logger,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Res,
 } from '@nestjs/common';
@@ -19,6 +20,10 @@ import { ChatService } from './chat.service.js';
 import type { Conversation } from './conversation.entity.js';
 import type { Message } from './message.entity.js';
 
+const renameSchema = z
+  .object({ title: z.string().trim().min(1).max(200) })
+  .strict();
+
 const sendMessageSchema = z.object({
   text: z.string().trim().min(1).max(20_000),
 });
@@ -26,6 +31,7 @@ const sendMessageSchema = z.object({
 const toConversationDto = ({
   id,
   title,
+  customTitle,
   kind,
   readAt,
   createdAt,
@@ -33,6 +39,7 @@ const toConversationDto = ({
 }: Conversation) => ({
   id,
   title,
+  customTitle,
   kind,
   readAt,
   createdAt,
@@ -77,6 +84,16 @@ export class ChatController {
     @Param('id', ParseUUIDPipe) id: string,
   ) {
     return (await this.chat.listMessages(userId, id)).map(toMessageDto);
+  }
+
+  @Patch(':id')
+  async rename(
+    @CurrentUserId() userId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: unknown,
+  ) {
+    const { title } = parseBody(renameSchema, body);
+    return toConversationDto(await this.chat.rename(userId, id, title));
   }
 
   @Post(':id/read')

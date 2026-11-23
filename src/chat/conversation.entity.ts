@@ -29,6 +29,10 @@ export class Conversation {
   @Column({ type: 'varchar', length: 200, nullable: true })
   title: string | null;
 
+  /** The user renamed it; briefings then stop showing their default name. */
+  @Column({ type: 'boolean', default: false })
+  customTitle: boolean;
+
   /** `chat` for ordinary dialogs, otherwise the briefing that opened it. */
   @Column({ type: 'varchar', length: 16, default: 'chat' })
   kind: ConversationKind;
