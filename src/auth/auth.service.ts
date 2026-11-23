@@ -118,6 +118,8 @@ export class AuthService {
       }
       user.email = profile.email;
       user.name = profile.name ?? user.name ?? null;
+      // Google decides the photo: a removed one is cleared here too.
+      user.avatarUrl = safeAvatarUrl(profile.picture);
       user = await m.save(user);
 
       account ??= m.create(GoogleAccount, {
@@ -149,4 +151,14 @@ function safeEqual(a: string, b: string): boolean {
   const ab = Buffer.from(a);
   const bb = Buffer.from(b);
   return ab.length === bb.length && timingSafeEqual(ab, bb);
+}
+
+/** Only https URLs end up in an <img src>; anything else is dropped. */
+export function safeAvatarUrl(url: string | null | undefined): string | null {
+  if (!url || url.length > 2048) return null;
+  try {
+    return new URL(url).protocol === 'https:' ? url : null;
+  } catch {
+    return null;
+  }
 }

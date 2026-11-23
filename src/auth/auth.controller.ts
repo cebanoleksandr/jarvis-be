@@ -96,8 +96,8 @@ export class AuthController {
   async me(@CurrentUserId() userId: string) {
     const user = await this.users.findById(userId);
     if (!user) throw new NotFoundException();
-    const { id, email, name, timezone } = user;
-    return { id, email, name, timezone };
+    const { id, email, name, timezone, avatarUrl } = user;
+    return { id, email, name, timezone, avatarUrl };
   }
 
   @Public()

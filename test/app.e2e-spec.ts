@@ -112,7 +112,12 @@ describe('App (e2e)', () => {
           expiry_date: Date.now() + 3600_000,
           scope: 'openid https://www.googleapis.com/auth/tasks',
         },
-        profile: { sub, email, name: 'Test User' },
+        profile: {
+          sub,
+          email,
+          name: 'Test User',
+          picture: 'https://lh3.googleusercontent.com/a/photo',
+        },
       });
 
       try {
@@ -143,6 +148,7 @@ describe('App (e2e)', () => {
           email,
           name: 'Test User',
           timezone: 'UTC',
+          avatarUrl: 'https://lh3.googleusercontent.com/a/photo',
         });
 
         const account = await db

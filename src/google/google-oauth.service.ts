@@ -19,6 +19,8 @@ export interface GoogleProfile {
   sub: string;
   email: string;
   name: string | null;
+  /** Profile photo URL from the ID token, when the account has one. */
+  picture?: string | null;
 }
 
 @Injectable()
@@ -99,6 +101,7 @@ export class GoogleOAuthService {
         sub: payload.sub,
         email: payload.email.toLowerCase(),
         name: payload.name ?? null,
+        picture: payload.picture ?? null,
       },
     };
   }
