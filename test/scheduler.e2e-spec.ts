@@ -163,6 +163,7 @@ describe('Scheduler (e2e)', () => {
     expect(conversation).toMatchObject({
       kind: 'morning',
       title: 'Morning briefing · 2026-11-12',
+      readAt: null,
     });
 
     const messages = await messagesOf(u.cookie, conversation.id);
@@ -187,6 +188,14 @@ describe('Scheduler (e2e)', () => {
         conversationId: conversation.id,
       },
     ]);
+  });
+
+  it('writes the briefing in the language the user chose', async () => {
+    const u = await newUser({ language: 'es' });
+    llm.scripts.set(u.name, [text('Buenos días')]);
+    expect(await scheduler.runDue(MORNING, [u.id])).toBe(1);
+    const prompt = llm.requests.at(-1)!.messages[0].content[0].text;
+    expect(prompt).toContain('Write in Spanish');
   });
 
   it('claims a run only once when ticks race', async () => {

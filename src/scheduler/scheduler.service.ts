@@ -9,6 +9,7 @@ import { localClock, type LocalClock } from '../common/time.js';
 import type { Env } from '../config/env.validation.js';
 import { User } from '../users/user.entity.js';
 import { briefingPrompt, briefingTitle } from './briefing-prompts.js';
+import type { Language } from '../users/languages.js';
 import { NotificationSettings } from './notification-settings.entity.js';
 import {
   type BriefingKind,
@@ -29,6 +30,7 @@ interface DueRun {
   userId: string;
   kind: BriefingKind;
   clock: LocalClock;
+  language: Language | null;
 }
 
 @Injectable()
@@ -77,7 +79,13 @@ export class SchedulerService {
     // Scans all users each tick: fine for the MVP, replace with one delayed
     // BullMQ job per user when the user count makes this slow.
     const users = await this.users.find({
-      select: { id: true, timezone: true, createdAt: true, lastActiveAt: true },
+      select: {
+        id: true,
+        timezone: true,
+        language: true,
+        createdAt: true,
+        lastActiveAt: true,
+      },
       where: onlyUserIds ? { id: In(onlyUserIds) } : {},
     });
     const activeSince = now.getTime() - INACTIVE_AFTER_DAYS * DAY_MS;
@@ -94,7 +102,7 @@ export class SchedulerService {
     const due: DueRun[] = active.flatMap((u) => {
       const clock = localClock(now, u.timezone);
       return dueKinds(settings.get(u.id) ?? DEFAULT_SETTINGS, clock).map(
-        (kind) => ({ userId: u.id, kind, clock }),
+        (kind) => ({ userId: u.id, kind, clock, language: u.language }),
       );
     });
     if (!due.length) return 0;
@@ -134,11 +142,12 @@ export class SchedulerService {
   async runNow(userId: string, kind: BriefingKind): Promise<Conversation> {
     const user = await this.users.findOneBy({ id: userId });
     if (!user) throw new NotFoundException('User not found');
-    const conversation = await this.open(
+    const conversation = await this.open({
       userId,
       kind,
-      localClock(new Date(), user.timezone),
-    );
+      clock: localClock(new Date(), user.timezone),
+      language: user.language,
+    });
     void this.generate(userId, conversation.id).catch((err) =>
       this.logger.error(
         `Manual ${kind} briefing for ${userId} failed: ${(err as Error).message}`,
@@ -148,11 +157,8 @@ export class SchedulerService {
   }
 
   /** False when another tick or instance already claimed this run. */
-  private async runScheduled({
-    userId,
-    kind,
-    clock,
-  }: DueRun): Promise<boolean> {
+  private async runScheduled(run: DueRun): Promise<boolean> {
+    const { userId, kind, clock } = run;
     const claim = await this.runs
       .createQueryBuilder()
       .insert()
@@ -164,7 +170,7 @@ export class SchedulerService {
     if (!runId) return false;
 
     try {
-      const conversation = await this.open(userId, kind, clock);
+      const conversation = await this.open(run);
       await this.runs.update(runId, { conversationId: conversation.id });
       await this.generate(userId, conversation.id);
       await this.runs.update(runId, { status: 'done', finishedAt: new Date() });
@@ -182,11 +188,11 @@ export class SchedulerService {
     return true;
   }
 
-  private open(userId: string, kind: BriefingKind, clock: LocalClock) {
+  private open({ userId, kind, clock, language }: DueRun) {
     return this.agent.startAutomatedConversation(userId, {
       kind,
       title: briefingTitle(kind, clock),
-      prompt: briefingPrompt(kind, clock),
+      prompt: briefingPrompt(kind, clock, language),
     });
   }
 

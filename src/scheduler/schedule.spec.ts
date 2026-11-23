@@ -93,4 +93,15 @@ describe('briefing prompts', () => {
       /^\[Automated request .* Thursday 2026-11-12 08:05\.\]/,
     );
   });
+
+  it("writes in the user's chosen language, or guesses without one", () => {
+    const clock = at('2026-11-12T06:05:00Z');
+    expect(briefingPrompt('morning', clock, 'uk')).toContain(
+      'Write in Ukrainian',
+    );
+    expect(briefingPrompt('morning', clock)).toContain(
+      "Write in the language the user's profile",
+    );
+    expect(briefingPrompt('morning', clock)).not.toContain('{language}');
+  });
 });

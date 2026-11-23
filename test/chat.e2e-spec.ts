@@ -7,6 +7,7 @@ import { App } from 'supertest/types.js';
 import { AppModule } from './../src/app.module.js';
 import { configureApp } from './../src/app.setup.js';
 import { AuthService } from './../src/auth/auth.service.js';
+import { Conversation } from './../src/chat/conversation.entity.js';
 import { Message } from './../src/chat/message.entity.js';
 import {
   type ChatRequest,
@@ -228,6 +229,53 @@ describe('Chat (e2e)', () => {
 
     const bobs = await http().get('/api/conversations').set('Cookie', bob);
     expect(bobs.body.some((c: { id: string }) => c.id === id)).toBe(false);
+  });
+
+  it('tracks when a conversation was read without reordering it', async () => {
+    const own = (
+      await http().post('/api/conversations').set('Cookie', sessions[0])
+    ).body;
+    // Chats the user starts are read from the start.
+    expect(own.readAt).toEqual(expect.any(String));
+
+    const briefing = await db.getRepository(Conversation).save({
+      userId: (
+        await db.getRepository(Conversation).findOneByOrFail({ id: own.id })
+      ).userId,
+      kind: 'morning',
+      title: 'Morning briefing',
+    });
+    const before = await db
+      .getRepository(Conversation)
+      .findOneByOrFail({ id: briefing.id });
+    expect(before.readAt).toBeNull();
+
+    await http()
+      .post(`/api/conversations/${briefing.id}/read`)
+      .set('Cookie', sessions[1])
+      .expect(404);
+    await http()
+      .post(`/api/conversations/${briefing.id}/read`)
+      .set('Cookie', sessions[0])
+      .expect(204);
+    const after = await db
+      .getRepository(Conversation)
+      .findOneByOrFail({ id: briefing.id });
+    expect(after.readAt).toBeInstanceOf(Date);
+    expect(after.updatedAt.getTime()).toBe(before.updatedAt.getTime());
+
+    // Reading again keeps the first time.
+    await http()
+      .post(`/api/conversations/${briefing.id}/read`)
+      .set('Cookie', sessions[0])
+      .expect(204);
+    expect(
+      (
+        await db
+          .getRepository(Conversation)
+          .findOneByOrFail({ id: briefing.id })
+      ).readAt!.getTime(),
+    ).toBe(after.readAt!.getTime());
   });
 
   it('deletes a conversation with its messages', async () => {

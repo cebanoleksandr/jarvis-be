@@ -10,6 +10,7 @@ const profile: ProfileView = {
   name: 'Ann',
   email: 'ann@example.com',
   timezone: 'Pacific/Auckland',
+  language: null,
   about: 'Backend developer, two kids.',
   preferences: { workHours: '9-17', focus: 'mornings' },
 };

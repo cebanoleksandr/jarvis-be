@@ -5,6 +5,7 @@ import {
   PrimaryGeneratedColumn,
   UpdateDateColumn,
 } from 'typeorm';
+import type { Language } from './languages.js';
 
 @Entity('users')
 export class User {
@@ -21,6 +22,10 @@ export class User {
   /** Google profile photo, refreshed on every sign-in. */
   @Column({ type: 'varchar', length: 2048, nullable: true })
   avatarUrl: string | null;
+
+  /** UI language the user picked (see LANGUAGES); null until they do. */
+  @Column({ type: 'varchar', length: 8, nullable: true })
+  language: Language | null;
 
   /** IANA zone, e.g. Europe/Kyiv. All timestamps in the DB stay UTC. */
   @Column({ type: 'varchar', length: 64, default: 'UTC' })

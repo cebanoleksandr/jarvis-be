@@ -2,12 +2,14 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Profile } from './profile.entity.js';
+import type { Language } from './languages.js';
 import { User } from './user.entity.js';
 
 export interface ProfileView {
   name: string | null;
   email: string;
   timezone: string;
+  language: Language | null;
   about: string;
   preferences: Record<string, string>;
 }
@@ -15,6 +17,7 @@ export interface ProfileView {
 export interface ProfileUpdate {
   name?: string | null;
   timezone?: string;
+  language?: Language | null;
   about?: string;
   preferences?: Record<string, string>;
 }
@@ -46,6 +49,7 @@ export class UsersService {
       if (!user) throw new NotFoundException('User not found');
       if (patch.name !== undefined) user.name = patch.name;
       if (patch.timezone !== undefined) user.timezone = patch.timezone;
+      if (patch.language !== undefined) user.language = patch.language;
       await m.save(user);
 
       const profile =
@@ -66,6 +70,7 @@ function toView(user: User, profile: Profile | null): ProfileView {
     name: user.name,
     email: user.email,
     timezone: user.timezone,
+    language: user.language,
     about: profile?.about ?? '',
     preferences: profile?.preferences ?? {},
   };

@@ -113,6 +113,20 @@ describe('Profile, goals and memories (e2e)', () => {
       });
     });
 
+    it('stores the UI language', async () => {
+      const res = await http()
+        .patch('/api/profile')
+        .set('Cookie', alice)
+        .send({ language: 'pl' })
+        .expect(200);
+      expect(res.body.language).toBe('pl');
+      await http()
+        .patch('/api/profile')
+        .set('Cookie', alice)
+        .send({ language: 'de' })
+        .expect(400);
+    });
+
     it('rejects an unknown timezone and unknown fields', async () => {
       await http()
         .patch('/api/profile')

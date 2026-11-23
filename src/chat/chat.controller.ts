@@ -27,12 +27,14 @@ const toConversationDto = ({
   id,
   title,
   kind,
+  readAt,
   createdAt,
   updatedAt,
 }: Conversation) => ({
   id,
   title,
   kind,
+  readAt,
   createdAt,
   updatedAt,
 });
@@ -75,6 +77,15 @@ export class ChatController {
     @Param('id', ParseUUIDPipe) id: string,
   ) {
     return (await this.chat.listMessages(userId, id)).map(toMessageDto);
+  }
+
+  @Post(':id/read')
+  @HttpCode(204)
+  async markRead(
+    @CurrentUserId() userId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    await this.chat.markRead(userId, id);
   }
 
   @Delete(':id')

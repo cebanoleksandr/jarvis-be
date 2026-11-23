@@ -1,4 +1,5 @@
 import type { LocalClock } from '../common/time.js';
+import { type Language, LANGUAGE_NAMES } from '../users/languages.js';
 import type { BriefingKind } from './schedule.js';
 
 const WEEKDAY_NAMES = [
@@ -33,16 +34,27 @@ const TASKS: Record<BriefingKind, string> = {
 - one question that helps the user reflect on the week.`,
 };
 
-const RULES = `Keep it short and easy to scan. Write in the language the user's profile, goals and notes are written in; use English if that is unclear. If the calendar or tasks cannot be read, say so in one line and work from the goals and notes alone. Do not call tools that create or change anything here: suggest changes in the text and let the user ask for them.`;
+const LANGUAGE_RULE = `Write in the language the user's profile, goals and notes are written in; use English if that is unclear.`;
+
+const RULES = `Keep it short and easy to scan. {language} If the calendar or tasks cannot be read, say so in one line and work from the goals and notes alone. Do not call tools that create or change anything here: suggest changes in the text and let the user ask for them.`;
 
 export function briefingTitle(kind: BriefingKind, clock: LocalClock): string {
   return `${TITLES[kind]} · ${clock.date}`;
 }
 
 /** The opening (synthetic) message of a scheduled conversation. */
-export function briefingPrompt(kind: BriefingKind, clock: LocalClock): string {
+export function briefingPrompt(
+  kind: BriefingKind,
+  clock: LocalClock,
+  language: Language | null = null,
+): string {
   const hh = String(Math.floor(clock.minutes / 60)).padStart(2, '0');
   const mm = String(clock.minutes % 60).padStart(2, '0');
   const when = `${WEEKDAY_NAMES[clock.weekday]} ${clock.date} ${hh}:${mm}`;
-  return `[Automated request from the scheduler, not typed by the user. User's local time: ${when}.]\n\n${TASKS[kind]}\n\n${RULES}`;
+  return `[Automated request from the scheduler, not typed by the user. User's local time: ${when}.]\n\n${TASKS[kind]}\n\n${RULES.replace(
+    '{language}',
+    language
+      ? `Write in ${LANGUAGE_NAMES[language]}, the language the user chose for the app.`
+      : LANGUAGE_RULE,
+  )}`;
 }

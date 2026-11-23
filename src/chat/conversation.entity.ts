@@ -33,6 +33,13 @@ export class Conversation {
   @Column({ type: 'varchar', length: 16, default: 'chat' })
   kind: ConversationKind;
 
+  /**
+   * When the user last opened it. Briefings start unread (null); chats the
+   * user starts are read from the start.
+   */
+  @Column({ type: 'timestamptz', nullable: true })
+  readAt: Date | null;
+
   @CreateDateColumn({ type: 'timestamptz' })
   createdAt: Date;
 

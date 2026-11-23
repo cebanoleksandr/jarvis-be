@@ -16,7 +16,9 @@ export class ChatService {
   ) {}
 
   createConversation(userId: string): Promise<Conversation> {
-    return this.conversations.save(this.conversations.create({ userId }));
+    return this.conversations.save(
+      this.conversations.create({ userId, readAt: new Date() }),
+    );
   }
 
   listConversations(userId: string): Promise<Conversation[]> {
@@ -46,6 +48,19 @@ export class ChatService {
       where: { conversationId },
       order: { seq: 'ASC' },
     });
+  }
+
+  /** Marks the conversation as seen; keeps the first time it was read. */
+  async markRead(userId: string, id: string): Promise<void> {
+    const conversation = await this.getOwnedConversation(userId, id);
+    if (conversation.readAt) return;
+    // Raw update: opening a chat must not bump updatedAt and reorder the list.
+    await this.conversations
+      .createQueryBuilder()
+      .update()
+      .set({ readAt: () => 'now()', updatedAt: () => '"updatedAt"' })
+      .where('id = :id', { id })
+      .execute();
   }
 
   async deleteConversation(userId: string, id: string): Promise<void> {

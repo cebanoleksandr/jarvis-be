@@ -2,12 +2,14 @@ import { Body, Controller, Get, Patch } from '@nestjs/common';
 import { z } from 'zod';
 import { CurrentUserId } from '../auth/current-user.decorator.js';
 import { isValidTimeZone, parseBody } from '../common/validation.js';
+import { LANGUAGES } from './languages.js';
 import { UsersService } from './users.service.js';
 
 const updateProfileSchema = z
   .object({
     name: z.string().trim().min(1).max(200).nullable(),
     timezone: z.string().refine(isValidTimeZone, 'Unknown IANA time zone'),
+    language: z.enum(LANGUAGES).nullable(),
     about: z.string().max(4000),
     preferences: z
       .record(z.string().trim().min(1).max(100), z.string().max(500))
