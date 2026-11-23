@@ -273,6 +273,79 @@ describe('Profile, goals and memories (e2e)', () => {
         .set('Cookie', alice)
         .expect(204);
     });
+
+    it("deletes all of a user's memories at once", async () => {
+      for (const text of ['One', 'Two'])
+        await http()
+          .post('/api/memories')
+          .set('Cookie', bob)
+          .send({ text })
+          .expect(201);
+      const aliceBefore = (
+        await http().get('/api/memories').set('Cookie', alice)
+      ).body.length;
+
+      await http().delete('/api/memories').set('Cookie', bob).expect(204);
+
+      expect(
+        (await http().get('/api/memories').set('Cookie', bob)).body,
+      ).toEqual([]);
+      expect(
+        (await http().get('/api/memories').set('Cookie', alice)).body,
+      ).toHaveLength(aliceBefore);
+    });
+
+    it('stores a category, defaulting to other', async () => {
+      const rule = (
+        await http()
+          .post('/api/memories')
+          .set('Cookie', bob)
+          .send({ text: 'No meetings on Fridays', category: 'directive' })
+          .expect(201)
+      ).body;
+      expect(rule).toEqual(
+        expect.objectContaining({
+          category: 'directive',
+          updatedAt: expect.any(String),
+        }),
+      );
+      const plain = (
+        await http()
+          .post('/api/memories')
+          .set('Cookie', bob)
+          .send({ text: 'Has a dog' })
+          .expect(201)
+      ).body;
+      expect(plain.category).toBe('other');
+
+      const moved = (
+        await http()
+          .patch(`/api/memories/${plain.id}`)
+          .set('Cookie', bob)
+          .send({ category: 'people' })
+          .expect(200)
+      ).body;
+      expect(moved).toEqual(
+        expect.objectContaining({ text: 'Has a dog', category: 'people' }),
+      );
+
+      await http()
+        .post('/api/memories')
+        .set('Cookie', bob)
+        .send({ text: 'x', category: 'secret' })
+        .expect(400);
+      await http()
+        .patch(`/api/memories/${plain.id}`)
+        .set('Cookie', bob)
+        .send({})
+        .expect(400);
+
+      for (const m of [rule, plain])
+        await http()
+          .delete(`/api/memories/${m.id}`)
+          .set('Cookie', bob)
+          .expect(204);
+    });
   });
 
   it('feeds profile, goals and memories into the system prompt', async () => {

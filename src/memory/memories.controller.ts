@@ -13,13 +13,29 @@ import { z } from 'zod';
 import { CurrentUserId } from '../auth/current-user.decorator.js';
 import { parseBody } from '../common/validation.js';
 import { MemoriesService } from './memories.service.js';
-import type { Memory } from './memory.entity.js';
+import { MEMORY_CATEGORIES, type Memory } from './memory.entity.js';
 
-const memorySchema = z
-  .object({ text: z.string().trim().min(1).max(1000) })
+const memoryFields = {
+  text: z.string().trim().min(1).max(1000),
+  category: z.enum(MEMORY_CATEGORIES),
+};
+const createMemorySchema = z
+  .object(memoryFields)
+  .partial({ category: true })
   .strict();
+const updateMemorySchema = z
+  .object(memoryFields)
+  .partial()
+  .strict()
+  .refine((v) => Object.keys(v).length > 0, 'Nothing to update');
 
-const toDto = ({ id, text, createdAt }: Memory) => ({ id, text, createdAt });
+const toDto = ({ id, text, category, createdAt, updatedAt }: Memory) => ({
+  id,
+  text,
+  category,
+  createdAt,
+  updatedAt,
+});
 
 @Controller('memories')
 export class MemoriesController {
@@ -32,8 +48,9 @@ export class MemoriesController {
 
   @Post()
   async create(@CurrentUserId() userId: string, @Body() body: unknown) {
-    const { text } = parseBody(memorySchema, body);
-    return toDto(await this.memories.create(userId, text));
+    return toDto(
+      await this.memories.create(userId, parseBody(createMemorySchema, body)),
+    );
   }
 
   @Patch(':id')
@@ -42,8 +59,20 @@ export class MemoriesController {
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: unknown,
   ) {
-    const { text } = parseBody(memorySchema, body);
-    return toDto(await this.memories.update(userId, id, text));
+    return toDto(
+      await this.memories.update(
+        userId,
+        id,
+        parseBody(updateMemorySchema, body),
+      ),
+    );
+  }
+
+  /** Forgets every note; goals and the profile stay. */
+  @Delete()
+  @HttpCode(204)
+  async removeAll(@CurrentUserId() userId: string) {
+    await this.memories.removeAll(userId);
   }
 
   @Delete(':id')

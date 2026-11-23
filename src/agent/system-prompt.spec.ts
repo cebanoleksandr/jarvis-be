@@ -48,6 +48,19 @@ describe('buildSystemPrompt', () => {
     expect(prompt).toContain('<goals>\n(none yet)\n</goals>');
   });
 
+  it('marks directive memories as rules', () => {
+    const prompt = buildSystemPrompt({
+      ...ctx,
+      memories: [
+        { text: 'No calls before 10', category: 'directive' },
+        { text: 'Has a cat', category: 'people' },
+      ],
+    });
+    expect(prompt).toContain(
+      '<memories>\n- [rule] No calls before 10\n- Has a cat\n</memories>',
+    );
+  });
+
   it('is identical within the same local day (cache-stable)', () => {
     const a = buildSystemPrompt(ctx, new Date('2026-11-06T12:00:00Z'));
     const b = buildSystemPrompt(ctx, new Date('2026-11-06T13:30:00Z'));
