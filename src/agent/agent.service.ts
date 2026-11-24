@@ -399,11 +399,23 @@ export class AgentService {
       }
 
       // Read-only calls run now; mutating ones wait for the user (null).
+      // A mutating call on an existing item first loads it for the card; if
+      // that fails (e.g. it was deleted) the model gets the error instead.
+      const before = new Map<number, unknown>();
       const outcomes = await Promise.all(
-        calls.map(async ({ prepared }): Promise<ToolOutcome | null> => {
+        calls.map(async ({ prepared }, i): Promise<ToolOutcome | null> => {
           if (prepared.kind === 'invalid')
             return { ok: false, error: prepared.error };
-          if (prepared.tool.mutating) return null;
+          if (prepared.tool.mutating) {
+            const found = await this.registry.lookup(
+              prepared.tool,
+              ctx,
+              prepared.input,
+            );
+            if (!found.ok) return found;
+            before.set(i, found.result);
+            return null;
+          }
           return this.registry.execute(prepared.tool, ctx, prepared.input);
         }),
       );
@@ -453,6 +465,7 @@ export class AgentService {
                   call,
                   prepared,
                   outcomes[i],
+                  before.get(i),
                 ),
               ),
             ),
@@ -566,6 +579,7 @@ function toActionRow(
   call: ToolCall,
   prepared: PreparedCall,
   outcome: ToolOutcome | null,
+  before?: unknown,
 ): Partial<PendingAction> {
   const ready = prepared.kind === 'ready' ? prepared : null;
   const rawArgs =
@@ -582,7 +596,10 @@ function toActionRow(
     args: ready?.input ?? rawArgs,
     summary:
       outcome === null && ready?.tool.summarize
-        ? ready.tool.summarize(ready.input)
+        ? {
+            ...ready.tool.summarize(ready.input, before),
+            ...(before === undefined ? {} : { before }),
+          }
         : null,
     status: outcome === null ? 'pending' : outcome.ok ? 'executed' : 'failed',
     result: outcome?.ok ? (outcome.result as object) : null,

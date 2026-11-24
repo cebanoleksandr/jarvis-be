@@ -71,13 +71,31 @@ export class ToolRegistry {
     };
   }
 
-  async execute(
+  execute(
     tool: AnyTool,
     ctx: ToolContext,
     input: unknown,
   ): Promise<ToolOutcome> {
+    return this.run(tool, () => tool.execute(ctx, input));
+  }
+
+  /** The item a mutating tool would change, for its confirmation card. */
+  lookup(
+    tool: AnyTool,
+    ctx: ToolContext,
+    input: unknown,
+  ): Promise<ToolOutcome> {
+    return tool.lookup
+      ? this.run(tool, () => tool.lookup!(ctx, input))
+      : Promise.resolve({ ok: true, result: undefined });
+  }
+
+  private async run(
+    tool: AnyTool,
+    fn: () => Promise<unknown>,
+  ): Promise<ToolOutcome> {
     try {
-      return { ok: true, result: await tool.execute(ctx, input) };
+      return { ok: true, result: await fn() };
     } catch (err) {
       if (err instanceof ToolError) return { ok: false, error: err.message };
       this.logger.error(

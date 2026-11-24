@@ -64,6 +64,29 @@ const testTools = [
     },
   }),
   defineTool({
+    name: 'remove_note',
+    description: 'Mutating, acts on an existing item',
+    mutating: true,
+    input: z.object({ noteId: z.string() }).strict(),
+    async lookup(ctx, { noteId }) {
+      executed.push({
+        tool: 'lookup:remove_note',
+        userId: ctx.userId,
+        input: { noteId },
+      });
+      if (noteId === 'missing') throw new ToolError('Not found in Google.');
+      return { title: `Note ${noteId}` };
+    },
+    summarize: ({ noteId }, before) => ({
+      title: 'Remove note',
+      details: { Title: (before as { title?: string })?.title ?? noteId },
+    }),
+    async execute(ctx, input) {
+      executed.push({ tool: 'remove_note', userId: ctx.userId, input });
+      return { removed: input.noteId };
+    },
+  }),
+  defineTool({
     name: 'send_ping',
     description: 'Mutating, cannot be undone',
     mutating: true,
@@ -238,6 +261,7 @@ describe('Agent loop and confirmations (e2e)', () => {
       'broken',
       'lookup',
       'make_note',
+      'remove_note',
       'send_ping',
     ]);
     const results = llm.lastMessages().at(-1)!;
@@ -329,6 +353,57 @@ describe('Agent loop and confirmations (e2e)', () => {
     // A second click does nothing.
     await decide(action.id, 'confirm').expect(409);
     expect(executed).toHaveLength(1);
+  });
+
+  it('loads the affected item for the card before asking', async () => {
+    const id = await newConversation();
+    llm.script = [callStep(toolUse('t1', 'remove_note', { noteId: 'n1' }))];
+
+    const events = await say(id, 'remove that note');
+    const action = events.find((e) => e.event === 'action_required')!.data;
+    expect(action).toMatchObject({
+      status: 'pending',
+      summary: {
+        title: 'Remove note',
+        details: { Title: 'Note n1' },
+        before: { title: 'Note n1' },
+      },
+    });
+    // Looked up as the session user; nothing changed yet.
+    expect(executed).toEqual([
+      { tool: 'lookup:remove_note', userId: aliceId, input: { noteId: 'n1' } },
+    ]);
+
+    llm.script = [finalStep('Removed.')];
+    await decide(action.id, 'confirm').expect(200);
+    expect(executed.at(-1)).toEqual({
+      tool: 'remove_note',
+      userId: aliceId,
+      input: { noteId: 'n1' },
+    });
+  });
+
+  it('a failed lookup goes back to the model without a card', async () => {
+    const id = await newConversation();
+    llm.script = [
+      callStep(toolUse('t1', 'remove_note', { noteId: 'missing' })),
+      finalStep('That note does not exist.'),
+    ];
+
+    const events = await say(id, 'remove the missing note');
+    expect(events.map((e) => e.event)).not.toContain('action_required');
+    expect(events.at(-1)!.data.stopReason).toBe('end_turn');
+    expect(llm.lastMessages().at(-1)!.content[0]).toMatchObject({
+      type: 'tool_result',
+      tool_use_id: 't1',
+      is_error: true,
+      content: 'Not found in Google.',
+    });
+    expect(executed.map((e) => e.tool)).toEqual(['lookup:remove_note']);
+    const pending = await http()
+      .get(`/api/conversations/${id}/pending-actions`)
+      .set('Cookie', alice);
+    expect(pending.body).toEqual([]);
   });
 
   it('runs edited arguments and tells the model', async () => {
