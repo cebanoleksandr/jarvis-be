@@ -20,9 +20,14 @@ import { ChatService } from './chat.service.js';
 import type { Conversation } from './conversation.entity.js';
 import type { Message } from './message.entity.js';
 
-const renameSchema = z
-  .object({ title: z.string().trim().min(1).max(200) })
-  .strict();
+const updateSchema = z
+  .object({
+    title: z.string().trim().min(1).max(200),
+    pinned: z.boolean(),
+  })
+  .partial()
+  .strict()
+  .refine((v) => Object.keys(v).length > 0, 'Nothing to update');
 
 const sendMessageSchema = z.object({
   text: z.string().trim().min(1).max(20_000),
@@ -33,6 +38,7 @@ const toConversationDto = ({
   title,
   customTitle,
   kind,
+  pinnedAt,
   readAt,
   createdAt,
   updatedAt,
@@ -41,6 +47,7 @@ const toConversationDto = ({
   title,
   customTitle,
   kind,
+  pinnedAt,
   readAt,
   createdAt,
   updatedAt,
@@ -87,13 +94,14 @@ export class ChatController {
   }
 
   @Patch(':id')
-  async rename(
+  async update(
     @CurrentUserId() userId: string,
     @Param('id', ParseUUIDPipe) id: string,
     @Body() body: unknown,
   ) {
-    const { title } = parseBody(renameSchema, body);
-    return toConversationDto(await this.chat.rename(userId, id, title));
+    return toConversationDto(
+      await this.chat.update(userId, id, parseBody(updateSchema, body)),
+    );
   }
 
   @Post(':id/read')

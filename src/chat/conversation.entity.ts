@@ -37,6 +37,10 @@ export class Conversation {
   @Column({ type: 'varchar', length: 16, default: 'chat' })
   kind: ConversationKind;
 
+  /** Set while the conversation is pinned to the top of the list. */
+  @Column({ type: 'timestamptz', nullable: true })
+  pinnedAt: Date | null;
+
   /**
    * When the user last opened it. Briefings start unread (null); chats the
    * user starts are read from the start.

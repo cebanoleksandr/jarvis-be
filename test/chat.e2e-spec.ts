@@ -7,6 +7,7 @@ import { App } from 'supertest/types.js';
 import { AppModule } from './../src/app.module.js';
 import { configureApp } from './../src/app.setup.js';
 import { AuthService } from './../src/auth/auth.service.js';
+import { MAX_PINNED } from './../src/chat/chat.service.js';
 import { Conversation } from './../src/chat/conversation.entity.js';
 import { Message } from './../src/chat/message.entity.js';
 import {
@@ -312,6 +313,82 @@ describe('Chat (e2e)', () => {
       .set('Cookie', sessions[1])
       .send({ title: 'mine now' })
       .expect(404);
+  });
+
+  it('pins conversations to the top without touching their activity', async () => {
+    const cookie = sessions[1];
+    const create = async () =>
+      (await http().post('/api/conversations').set('Cookie', cookie)).body
+        .id as string;
+    const older = await create();
+    const newer = await create();
+    const listIds = async () =>
+      (await http().get('/api/conversations').set('Cookie', cookie)).body.map(
+        (c: { id: string }) => c.id,
+      ) as string[];
+    const before = await listIds();
+    expect(before.indexOf(newer)).toBeLessThan(before.indexOf(older));
+
+    const pinned = await http()
+      .patch(`/api/conversations/${older}`)
+      .set('Cookie', cookie)
+      .send({ pinned: true })
+      .expect(200);
+    expect(pinned.body.pinnedAt).toEqual(expect.any(String));
+    expect((await listIds())[0]).toBe(older);
+
+    // Pinning again keeps the original time.
+    const again = await http()
+      .patch(`/api/conversations/${older}`)
+      .set('Cookie', cookie)
+      .send({ pinned: true })
+      .expect(200);
+    expect(again.body.pinnedAt).toBe(pinned.body.pinnedAt);
+
+    const unpinned = await http()
+      .patch(`/api/conversations/${older}`)
+      .set('Cookie', cookie)
+      .send({ pinned: false })
+      .expect(200);
+    expect(unpinned.body.pinnedAt).toBeNull();
+    const after = await listIds();
+    expect(after.indexOf(newer)).toBeLessThan(after.indexOf(older));
+
+    await http()
+      .patch(`/api/conversations/${older}`)
+      .set('Cookie', cookie)
+      .send({})
+      .expect(400);
+    await http()
+      .patch(`/api/conversations/${older}`)
+      .set('Cookie', sessions[0])
+      .send({ pinned: true })
+      .expect(404);
+  });
+
+  it('limits how many conversations can be pinned', async () => {
+    const cookie = sessions[1];
+    const ids: string[] = [];
+    for (let i = 0; i <= MAX_PINNED; i++)
+      ids.push(
+        (await http().post('/api/conversations').set('Cookie', cookie)).body.id,
+      );
+    for (const id of ids.slice(0, MAX_PINNED))
+      await http()
+        .patch(`/api/conversations/${id}`)
+        .set('Cookie', cookie)
+        .send({ pinned: true })
+        .expect(200);
+    await http()
+      .patch(`/api/conversations/${ids[MAX_PINNED]}`)
+      .set('Cookie', cookie)
+      .send({ pinned: true })
+      .expect(400);
+    for (const id of ids)
+      await http()
+        .delete(`/api/conversations/${id}`)
+        .set('Cookie', cookie)
+        .expect(204);
   });
 
   it('deletes a conversation with its messages', async () => {

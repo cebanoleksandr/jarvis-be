@@ -1,9 +1,16 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { IsNull, Not, Repository } from 'typeorm';
 import { type AgentEvent, AgentService } from '../agent/agent.service.js';
 import { Conversation } from './conversation.entity.js';
 import { Message } from './message.entity.js';
+
+/** Keeps the pinned block of the sidebar short. */
+export const MAX_PINNED = 10;
 
 @Injectable()
 export class ChatService {
@@ -24,7 +31,11 @@ export class ChatService {
   listConversations(userId: string): Promise<Conversation[]> {
     return this.conversations.find({
       where: { userId },
-      order: { updatedAt: 'DESC' },
+      // Pinned first (most recently pinned on top), then by activity.
+      order: {
+        pinnedAt: { direction: 'DESC', nulls: 'LAST' },
+        updatedAt: 'DESC',
+      },
       take: 100,
     });
   }
@@ -50,20 +61,44 @@ export class ChatService {
     });
   }
 
-  /** Sets a title chosen by the user; the list order does not change. */
-  async rename(
+  /**
+   * Renames and/or pins a conversation. Neither counts as activity, so
+   * updatedAt (the list order among unpinned chats) stays as it was.
+   */
+  async update(
     userId: string,
     id: string,
-    title: string,
+    patch: { title?: string; pinned?: boolean },
   ): Promise<Conversation> {
     const conversation = await this.getOwnedConversation(userId, id);
-    await this.conversations
-      .createQueryBuilder()
-      .update()
-      .set({ title, customTitle: true, updatedAt: () => '"updatedAt"' })
-      .where('id = :id', { id })
-      .execute();
-    return Object.assign(conversation, { title, customTitle: true });
+    const changes: Partial<Conversation> = {};
+    if (patch.title !== undefined) {
+      changes.title = patch.title;
+      changes.customTitle = true;
+    }
+    if (
+      patch.pinned !== undefined &&
+      patch.pinned !== !!conversation.pinnedAt
+    ) {
+      if (
+        patch.pinned &&
+        (await this.conversations.count({
+          where: { userId, pinnedAt: Not(IsNull()) },
+        })) >= MAX_PINNED
+      ) {
+        throw new BadRequestException(`At most ${MAX_PINNED} pinned chats`);
+      }
+      changes.pinnedAt = patch.pinned ? new Date() : null;
+    }
+    if (Object.keys(changes).length) {
+      await this.conversations
+        .createQueryBuilder()
+        .update()
+        .set({ ...changes, updatedAt: () => '"updatedAt"' })
+        .where('id = :id', { id })
+        .execute();
+    }
+    return Object.assign(conversation, changes);
   }
 
   /** Marks the conversation as seen; keeps the first time it was read. */
