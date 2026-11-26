@@ -4,13 +4,61 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { IsNull, Not, Repository } from 'typeorm';
+import { In, IsNull, Not, Repository } from 'typeorm';
 import { type AgentEvent, AgentService } from '../agent/agent.service.js';
 import { Conversation } from './conversation.entity.js';
 import { Message } from './message.entity.js';
 
 /** Keeps the pinned block of the sidebar short. */
 export const MAX_PINNED = 10;
+
+export const SEARCH_MIN_LENGTH = 2;
+export const SEARCH_MAX_LENGTH = 200;
+const SEARCH_MAX_RESULTS = 30;
+/** Matching messages scanned, newest first; plenty for 30 conversations. */
+const SEARCH_MAX_MESSAGES = 300;
+
+export interface SearchHit {
+  conversation: Conversation;
+  /** The newest matching message, or null when only the title matched. */
+  match: {
+    messageId: string;
+    role: 'user' | 'assistant';
+    snippet: string;
+    createdAt: Date;
+  } | null;
+  /** Matching messages in this conversation (within the scanned ones). */
+  matches: number;
+}
+
+/** `%` and `_` from the user are literal, not wildcards. */
+const likePattern = (q: string) => `%${q.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+
+/**
+ * About 160 characters around the first occurrence of `q`, on one line, cut
+ * at word boundaries. Markdown markers are dropped so the excerpt reads as text.
+ */
+export function snippetAround(text: string, q: string, width = 160): string {
+  const flat = text
+    .replace(/```[a-z]*\n?/gi, ' ')
+    .replace(/[*_`#>|]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const at = flat.toLocaleLowerCase().indexOf(q.toLocaleLowerCase());
+  if (at < 0 || flat.length <= width) return flat.slice(0, width);
+  let start = Math.max(0, at - Math.floor((width - q.length) / 3));
+  let end = Math.min(flat.length, start + width);
+  start = Math.max(0, end - width);
+  if (start > 0) {
+    const space = flat.indexOf(' ', start);
+    if (space >= 0 && space < at) start = space + 1;
+  }
+  if (end < flat.length) {
+    const space = flat.lastIndexOf(' ', end);
+    if (space > at + q.length) end = space;
+  }
+  return `${start > 0 ? '…' : ''}${flat.slice(start, end)}${end < flat.length ? '…' : ''}`;
+}
 
 @Injectable()
 export class ChatService {
@@ -38,6 +86,92 @@ export class ChatService {
       },
       take: 100,
     });
+  }
+
+  /**
+   * Conversations whose messages or title contain `q` (case-insensitive),
+   * newest match first. Synthetic prompts (briefing requests) are skipped:
+   * the user never wrote them.
+   */
+  async search(userId: string, q: string): Promise<SearchHit[]> {
+    const pattern = likePattern(q);
+    const rows: {
+      messageId: string;
+      conversationId: string;
+      role: 'user' | 'assistant';
+      text: string;
+      createdAt: Date;
+    }[] = await this.messages.query(
+      `SELECT m.id AS "messageId", m."conversationId", m.role,
+              b.value->>'text' AS text, m."createdAt"
+         FROM messages m
+         JOIN conversations c ON c.id = m."conversationId"
+         CROSS JOIN LATERAL jsonb_array_elements(
+           CASE WHEN jsonb_typeof(m.content) = 'array' THEN m.content ELSE '[]'::jsonb END
+         ) AS b(value)
+        WHERE c."userId" = $1
+          AND NOT m.synthetic
+          AND b.value->>'type' = 'text'
+          AND b.value->>'text' ILIKE $2 ESCAPE '\\'
+        ORDER BY m.seq DESC
+        LIMIT ${SEARCH_MAX_MESSAGES}`,
+      [userId, pattern],
+    );
+
+    // The newest match per conversation; rows are already newest first.
+    const byConversation = new Map<
+      string,
+      { first: (typeof rows)[number]; count: number; messageIds: Set<string> }
+    >();
+    for (const r of rows) {
+      const hit = byConversation.get(r.conversationId);
+      if (!hit) {
+        byConversation.set(r.conversationId, {
+          first: r,
+          count: 1,
+          messageIds: new Set([r.messageId]),
+        });
+      } else if (!hit.messageIds.has(r.messageId)) {
+        hit.messageIds.add(r.messageId);
+        hit.count++;
+      }
+    }
+
+    const titled = await this.conversations
+      .createQueryBuilder('c')
+      .where('c."userId" = :userId', { userId })
+      .andWhere(`c.title ILIKE :pattern ESCAPE '\\'`, { pattern })
+      .orderBy('c."updatedAt"', 'DESC')
+      .take(SEARCH_MAX_RESULTS)
+      .getMany();
+    const ids = [...byConversation.keys()].filter(
+      (id) => !titled.some((c) => c.id === id),
+    );
+    const conversations = [
+      ...titled,
+      ...(ids.length
+        ? await this.conversations.findBy({ id: In(ids), userId })
+        : []),
+    ];
+
+    const hits: SearchHit[] = conversations.map((conversation) => {
+      const hit = byConversation.get(conversation.id);
+      return {
+        conversation,
+        match: hit
+          ? {
+              messageId: hit.first.messageId,
+              role: hit.first.role,
+              snippet: snippetAround(hit.first.text, q),
+              createdAt: new Date(hit.first.createdAt),
+            }
+          : null,
+        matches: hit?.count ?? 0,
+      };
+    });
+    const when = (h: SearchHit) =>
+      (h.match?.createdAt ?? h.conversation.updatedAt).getTime();
+    return hits.sort((a, b) => when(b) - when(a)).slice(0, SEARCH_MAX_RESULTS);
   }
 
   /** Every conversation access goes through here: 404 unless owned by userId. */

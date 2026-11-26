@@ -9,6 +9,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   Res,
 } from '@nestjs/common';
 import type { Response } from 'express';
@@ -16,7 +17,11 @@ import { z } from 'zod';
 import { CurrentUserId } from '../auth/current-user.decorator.js';
 import { streamSse } from '../common/sse.js';
 import { parseBody } from '../common/validation.js';
-import { ChatService } from './chat.service.js';
+import {
+  ChatService,
+  SEARCH_MAX_LENGTH,
+  SEARCH_MIN_LENGTH,
+} from './chat.service.js';
 import type { Conversation } from './conversation.entity.js';
 import type { Message } from './message.entity.js';
 
@@ -28,6 +33,10 @@ const updateSchema = z
   .partial()
   .strict()
   .refine((v) => Object.keys(v).length > 0, 'Nothing to update');
+
+const searchSchema = z.object({
+  q: z.string().trim().min(SEARCH_MIN_LENGTH).max(SEARCH_MAX_LENGTH),
+});
 
 const sendMessageSchema = z.object({
   text: z.string().trim().min(1).max(20_000),
@@ -83,6 +92,17 @@ export class ChatController {
   @Get()
   async list(@CurrentUserId() userId: string) {
     return (await this.chat.listConversations(userId)).map(toConversationDto);
+  }
+
+  /** Conversations whose title or messages contain `q`, newest match first. */
+  @Get('search')
+  async search(@CurrentUserId() userId: string, @Query('q') q: unknown) {
+    const { q: query } = parseBody(searchSchema, { q });
+    return (await this.chat.search(userId, query)).map((h) => ({
+      conversation: toConversationDto(h.conversation),
+      match: h.match,
+      matches: h.matches,
+    }));
   }
 
   @Get(':id/messages')

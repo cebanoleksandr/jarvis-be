@@ -405,4 +405,100 @@ describe('Chat (e2e)', () => {
       await db.getRepository(Message).countBy({ conversationId: id }),
     ).toBe(0);
   });
+
+  describe('search', () => {
+    const seed = async (
+      userIndex: number,
+      title: string | null,
+      messages: {
+        role: 'user' | 'assistant';
+        text: string;
+        synthetic?: boolean;
+      }[],
+    ) => {
+      const c = await db.getRepository(Conversation).save({
+        userId: users[userIndex].id,
+        title,
+      });
+      for (const m of messages) {
+        await db.getRepository(Message).save({
+          conversationId: c.id,
+          role: m.role,
+          content: [{ type: 'text', text: m.text }],
+          synthetic: m.synthetic ?? false,
+        });
+      }
+      return c.id;
+    };
+    const search = (q: string, session = sessions[0]) =>
+      http()
+        .get('/api/conversations/search')
+        .query({ q })
+        .set('Cookie', session);
+
+    it('finds messages and titles, newest match first, only the own ones', async () => {
+      const tag = randomUUID().slice(0, 8);
+      const older = await seed(0, `Groceries ${tag}`, [
+        { role: 'user', text: 'Anything for the weekend?' },
+      ]);
+      const newer = await seed(0, 'Week plan', [
+        { role: 'user', text: `Remind me about ${tag} on Friday` },
+        { role: 'assistant', text: `Sure, **${tag}** is on Friday.` },
+      ]);
+      await seed(1, 'Bob', [{ role: 'user', text: `secret ${tag}` }]);
+
+      const res = await search(tag.toUpperCase()).expect(200);
+      expect(
+        res.body.map(
+          (h: { conversation: { id: string } }) => h.conversation.id,
+        ),
+      ).toEqual([newer, older]);
+      expect(res.body[0]).toMatchObject({
+        matches: 2,
+        match: { role: 'assistant', snippet: `Sure, ${tag} is on Friday.` },
+      });
+      expect(res.body[1]).toMatchObject({ match: null, matches: 0 });
+    });
+
+    it('is case-insensitive for Cyrillic and treats % and _ literally', async () => {
+      const id = await seed(0, null, [
+        { role: 'user', text: 'Купить МОЛОКО и хлеб, скидка 100%' },
+      ]);
+      const ids = async (q: string) =>
+        (await search(q).expect(200)).body.map(
+          (h: { conversation: { id: string } }) => h.conversation.id,
+        );
+      expect(await ids('молоко')).toContain(id);
+      expect(await ids('100%')).toContain(id);
+      expect(await ids('0_')).not.toContain(id);
+    });
+
+    it('skips synthetic briefing prompts', async () => {
+      const tag = randomUUID().slice(0, 8);
+      await seed(0, null, [
+        { role: 'user', text: `briefing ${tag}`, synthetic: true },
+      ]);
+      expect((await search(tag).expect(200)).body).toEqual([]);
+    });
+
+    it('cuts a long message to a snippet around the match', async () => {
+      const tag = randomUUID().slice(0, 8);
+      const filler = 'lorem ipsum dolor sit amet '.repeat(20);
+      await seed(0, null, [{ role: 'user', text: `${filler}${tag}${filler}` }]);
+      const [hit] = (await search(tag).expect(200)).body;
+      expect(hit.match.snippet).toContain(tag);
+      expect(hit.match.snippet.startsWith('…')).toBe(true);
+      expect(hit.match.snippet.endsWith('…')).toBe(true);
+      expect(hit.match.snippet.length).toBeLessThanOrEqual(162);
+    });
+
+    it('rejects a missing or too short query', async () => {
+      await http()
+        .get('/api/conversations/search')
+        .set('Cookie', sessions[0])
+        .expect(400);
+      await search(' a ').expect(400);
+      await http().get('/api/conversations/search?q=abc').expect(401);
+    });
+  });
 });
