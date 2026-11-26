@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { Profile } from './profile.entity.js';
+import { UserEvents } from './user-events.js';
 import type { Language } from './languages.js';
 import { User } from './user.entity.js';
 
@@ -27,6 +28,7 @@ export class UsersService {
   constructor(
     @InjectRepository(User) private readonly users: Repository<User>,
     @InjectRepository(Profile) private readonly profiles: Repository<Profile>,
+    private readonly events: UserEvents,
   ) {}
 
   findById(id: string): Promise<User | null> {
@@ -44,11 +46,15 @@ export class UsersService {
     userId: string,
     patch: ProfileUpdate,
   ): Promise<ProfileView> {
-    return this.users.manager.transaction(async (m) => {
+    let timezoneChanged = false;
+    const view = await this.users.manager.transaction(async (m) => {
       const user = await m.findOneBy(User, { id: userId });
       if (!user) throw new NotFoundException('User not found');
       if (patch.name !== undefined) user.name = patch.name;
-      if (patch.timezone !== undefined) user.timezone = patch.timezone;
+      if (patch.timezone !== undefined && patch.timezone !== user.timezone) {
+        user.timezone = patch.timezone;
+        timezoneChanged = true;
+      }
       if (patch.language !== undefined) user.language = patch.language;
       await m.save(user);
 
@@ -62,6 +68,9 @@ export class UsersService {
 
       return toView(user, profile);
     });
+    // Briefings are planned in the user's local time.
+    if (timezoneChanged) this.events.scheduleChanged(userId);
+    return view;
   }
 }
 

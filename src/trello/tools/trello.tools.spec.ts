@@ -1,6 +1,13 @@
 import type { TrelloClientService } from '../trello-client.service.js';
 import { trelloError } from '../trello-client.service.js';
-import { dueToTrello, localDue, trelloTools } from './trello.tools.js';
+import {
+  dueToTrello,
+  type fetchCards,
+  localDue,
+  trelloTools,
+} from './trello.tools.js';
+
+type Cards = Awaited<ReturnType<typeof fetchCards>>;
 
 const B = 'b'.repeat(24);
 const L1 = '1'.repeat(24);
@@ -82,7 +89,7 @@ describe('read tools', () => {
   it('list_trello_cards needs a filter and names board and list', async () => {
     expect(listCards.input.safeParse({}).success).toBe(false);
     expect(listCards.input.safeParse({ boardId: 'nope' }).success).toBe(false);
-    const res = await listCards.execute(ctx, { boardId: B });
+    const res = (await listCards.execute(ctx, { boardId: B })) as Cards;
     expect(res.cards[0]).toEqual({
       id: C,
       name: 'Fix the bike',
@@ -116,10 +123,12 @@ describe('read tools', () => {
             ? [board]
             : [later, done, tonight, card],
       );
-      const res = await listCards.execute(ctx, { dueWithinDays: 0 });
+      const res = (await listCards.execute(ctx, { dueWithinDays: 0 })) as Cards;
       // 21:30 UTC is 23:30 in Kyiv, still today; sorted by due.
       expect(res.cards.map((c) => c.id)).toEqual([C, 'f'.repeat(24)]);
-      const week = await listCards.execute(ctx, { dueWithinDays: 7 });
+      const week = (await listCards.execute(ctx, {
+        dueWithinDays: 7,
+      })) as Cards;
       expect(week.cards).toHaveLength(3);
     } finally {
       vi.useRealTimers();

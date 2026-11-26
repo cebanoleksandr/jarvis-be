@@ -1,46 +1,69 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { Cron, CronExpression } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, Repository } from 'typeorm';
+import { MoreThanOrEqual, Repository } from 'typeorm';
 import { AgentService } from '../agent/agent.service.js';
 import { Conversation } from '../chat/conversation.entity.js';
 import { localClock, type LocalClock } from '../common/time.js';
-import type { Env } from '../config/env.validation.js';
 import { User } from '../users/user.entity.js';
 import { briefingPrompt, briefingTitle } from './briefing-prompts.js';
 import type { Language } from '../users/languages.js';
 import { NotificationSettings } from './notification-settings.entity.js';
 import {
+  BRIEFING_KINDS,
   type BriefingKind,
+  briefingWindow,
   DEFAULT_SETTINGS,
-  dueKinds,
+  nextRun,
   type ScheduleSettings,
 } from './schedule.js';
 import { ScheduledRun } from './scheduled-run.entity.js';
 
 /** Briefings stop for users who have not used the app for this long. */
 export const INACTIVE_AFTER_DAYS = 14;
-/** Briefings generated in parallel within one tick. */
-const CONCURRENCY = 3;
 const RUN_TIMEOUT_MS = 5 * 60_000;
 const DAY_MS = 24 * 60 * 60_000;
+/** A queued job firing this much before its window (clock skew) still runs. */
+const EARLY_TOLERANCE_MS = 60_000;
 
-interface DueRun {
+/** What a queued briefing job carries; everything else is re-read when it runs. */
+export interface BriefingJob {
+  userId: string;
+  kind: BriefingKind;
+  /** The user's local date the briefing is for, `YYYY-MM-DD`. */
+  localDate: string;
+}
+
+export interface PlannedRun {
+  kind: BriefingKind;
+  localDate: string;
+  /** Window start; in the past when the briefing is due right away. */
+  at: Date;
+}
+
+/** `skipped`: not due (settings changed, inactive, already claimed, ...). */
+export type RunOutcome = 'sent' | 'failed' | 'skipped';
+
+interface Run {
   userId: string;
   kind: BriefingKind;
   clock: LocalClock;
   language: Language | null;
 }
 
+const isActive = (u: Pick<User, 'lastActiveAt' | 'createdAt'>, now: Date) =>
+  (u.lastActiveAt ?? u.createdAt).getTime() >=
+  now.getTime() - INACTIVE_AFTER_DAYS * DAY_MS;
+
+/**
+ * Decides when briefings are due and runs them. Timing lives in the briefing
+ * queue (one delayed job per user and kind); this service is the database
+ * side: what to plan, and whether a job that fires is still due.
+ */
 @Injectable()
 export class SchedulerService {
   private readonly logger = new Logger(SchedulerService.name);
-  private readonly enabled: boolean;
-  private ticking = false;
 
   constructor(
-    config: ConfigService<Env, true>,
     @InjectRepository(User) private readonly users: Repository<User>,
     @InjectRepository(NotificationSettings)
     private readonly settings: Repository<NotificationSettings>,
@@ -49,89 +72,95 @@ export class SchedulerService {
     @InjectRepository(Conversation)
     private readonly conversations: Repository<Conversation>,
     private readonly agent: AgentService,
-  ) {
-    this.enabled =
-      config.get('SCHEDULER_ENABLED', { infer: true }) &&
-      config.get('NODE_ENV', { infer: true }) !== 'test';
+  ) {}
+
+  /**
+   * The next run of each enabled briefing of the user, skipping dates already
+   * sent. Empty for unknown or inactive users: their jobs are dropped.
+   */
+  async plansFor(userId: string, now: Date): Promise<PlannedRun[]> {
+    const user = await this.users.findOne({
+      select: { id: true, timezone: true, createdAt: true, lastActiveAt: true },
+      where: { id: userId },
+    });
+    if (!user || !isActive(user, now)) return [];
+    const settings = await this.settingsOf(userId);
+    const today = localClock(now, user.timezone).date;
+    const claimed = await this.runs.find({
+      select: { kind: true, localDate: true },
+      where: { userId, localDate: MoreThanOrEqual(today) },
+    });
+    return BRIEFING_KINDS.flatMap((kind) => {
+      const done = new Set(
+        claimed.filter((r) => r.kind === kind).map((r) => r.localDate),
+      );
+      const next = nextRun(settings, kind, user.timezone, now, done);
+      return next ? [{ kind, ...next }] : [];
+    });
   }
 
-  @Cron(CronExpression.EVERY_MINUTE)
-  async tick(): Promise<void> {
-    // A slow tick (many briefings) must not overlap with the next one.
-    if (!this.enabled || this.ticking) return;
-    this.ticking = true;
-    try {
-      await this.runDue(new Date());
-    } catch (err) {
-      this.logger.error(
-        `Scheduler tick failed: ${(err as Error).stack ?? String(err)}`,
-      );
-    } finally {
-      this.ticking = false;
-    }
+  /** Users whose briefings should be planned (used by the hourly check). */
+  async activeUserIds(now: Date): Promise<string[]> {
+    const users = await this.users.find({
+      select: { id: true, createdAt: true, lastActiveAt: true },
+    });
+    return users.filter((u) => isActive(u, now)).map((u) => u.id);
   }
 
   /**
-   * Sends every briefing whose window is open at `now` and that was not sent
-   * yet. Returns how many were started. `onlyUserIds` narrows the scan (tests).
+   * Runs a queued briefing if it is still due at `now` under the user's
+   * current settings and time zone; jobs left over from older settings are
+   * skipped. The unique claim in scheduled_runs makes a duplicate job (two
+   * instances, a retry) harmless: the briefing is sent once.
    */
-  async runDue(now: Date, onlyUserIds?: string[]): Promise<number> {
-    // Scans all users each tick: fine for the MVP, replace with one delayed
-    // BullMQ job per user when the user count makes this slow.
-    const users = await this.users.find({
-      select: {
-        id: true,
-        timezone: true,
-        language: true,
-        createdAt: true,
-        lastActiveAt: true,
-      },
-      where: onlyUserIds ? { id: In(onlyUserIds) } : {},
-    });
-    const activeSince = now.getTime() - INACTIVE_AFTER_DAYS * DAY_MS;
-    const active = users.filter(
-      (u) => (u.lastActiveAt ?? u.createdAt).getTime() >= activeSince,
+  async runPlanned(job: BriefingJob, now: Date): Promise<RunOutcome> {
+    const { userId, kind, localDate } = job;
+    const user = await this.users.findOneBy({ id: userId });
+    if (!user || !isActive(user, now)) return 'skipped';
+    const window = briefingWindow(
+      await this.settingsOf(userId),
+      kind,
+      localDate,
+      user.timezone,
     );
-    if (!active.length) return 0;
+    if (!window) return 'skipped';
+    const early = window.start.getTime() - now.getTime();
+    const at = early > 0 && early <= EARLY_TOLERANCE_MS ? window.start : now;
+    if (at < window.start || at >= window.end) return 'skipped';
 
-    const settings = new Map(
-      (await this.settings.findBy({ userId: In(active.map((u) => u.id)) })).map(
-        (s) => [s.userId, s as ScheduleSettings],
-      ),
-    );
-    const due: DueRun[] = active.flatMap((u) => {
-      const clock = localClock(now, u.timezone);
-      return dueKinds(settings.get(u.id) ?? DEFAULT_SETTINGS, clock).map(
-        (kind) => ({ userId: u.id, kind, clock, language: u.language }),
+    const claim = await this.runs
+      .createQueryBuilder()
+      .insert()
+      .values({ userId, kind, localDate, status: 'running' })
+      .orIgnore()
+      .returning('id')
+      .execute();
+    const runId = (claim.raw as { id: string }[])[0]?.id;
+    if (!runId) return 'skipped';
+
+    try {
+      const conversation = await this.open({
+        userId,
+        kind,
+        clock: localClock(at, user.timezone),
+        language: user.language,
+      });
+      await this.runs.update(runId, { conversationId: conversation.id });
+      await this.generate(userId, conversation.id);
+      await this.runs.update(runId, { status: 'done', finishedAt: new Date() });
+      return 'sent';
+    } catch (err) {
+      // Not retried: the claim stays, so a broken briefing is not re-billed.
+      this.logger.error(
+        `${kind} briefing for ${userId} failed: ${(err as Error).stack ?? String(err)}`,
       );
-    });
-    if (!due.length) return 0;
-
-    // Skip what is already claimed, so an open window costs one query per tick.
-    const existing = await this.runs.find({
-      select: { userId: true, kind: true, localDate: true },
-      where: {
-        userId: In([...new Set(due.map((d) => d.userId))]),
-        localDate: In([...new Set(due.map((d) => d.clock.date))]),
-      },
-    });
-    const taken = new Set(
-      existing.map((r) => runKey(r.userId, r.kind, r.localDate)),
-    );
-    const todo = due.filter(
-      (d) => !taken.has(runKey(d.userId, d.kind, d.clock.date)),
-    );
-
-    let started = 0;
-    const queue = [...todo];
-    await Promise.all(
-      Array.from({ length: Math.min(CONCURRENCY, queue.length) }, async () => {
-        for (let d = queue.shift(); d; d = queue.shift()) {
-          if (await this.runScheduled(d)) started++;
-        }
-      }),
-    );
-    return started;
+      await this.runs.update(runId, {
+        status: 'failed',
+        error: (err as Error).message.slice(0, 1000),
+        finishedAt: new Date(),
+      });
+      return 'failed';
+    }
   }
 
   /**
@@ -156,39 +185,11 @@ export class SchedulerService {
     return conversation;
   }
 
-  /** False when another tick or instance already claimed this run. */
-  private async runScheduled(run: DueRun): Promise<boolean> {
-    const { userId, kind, clock } = run;
-    const claim = await this.runs
-      .createQueryBuilder()
-      .insert()
-      .values({ userId, kind, localDate: clock.date, status: 'running' })
-      .orIgnore()
-      .returning('id')
-      .execute();
-    const runId = (claim.raw as { id: string }[])[0]?.id;
-    if (!runId) return false;
-
-    try {
-      const conversation = await this.open(run);
-      await this.runs.update(runId, { conversationId: conversation.id });
-      await this.generate(userId, conversation.id);
-      await this.runs.update(runId, { status: 'done', finishedAt: new Date() });
-    } catch (err) {
-      // Not retried: the claim stays, so a broken briefing is not re-billed every minute.
-      this.logger.error(
-        `${kind} briefing for ${userId} failed: ${(err as Error).stack ?? String(err)}`,
-      );
-      await this.runs.update(runId, {
-        status: 'failed',
-        error: (err as Error).message.slice(0, 1000),
-        finishedAt: new Date(),
-      });
-    }
-    return true;
+  private async settingsOf(userId: string): Promise<ScheduleSettings> {
+    return (await this.settings.findOneBy({ userId })) ?? DEFAULT_SETTINGS;
   }
 
-  private open({ userId, kind, clock, language }: DueRun) {
+  private open({ userId, kind, clock, language }: Run) {
     return this.agent.startAutomatedConversation(userId, {
       kind,
       title: briefingTitle(kind, clock),
@@ -216,8 +217,4 @@ export class SchedulerService {
       throw err;
     }
   }
-}
-
-function runKey(userId: string, kind: string, localDate: string): string {
-  return `${userId}:${kind}:${localDate}`;
 }

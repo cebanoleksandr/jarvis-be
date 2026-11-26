@@ -37,7 +37,7 @@ describe('calendar tools', () => {
       location: 'Clinic',
     });
     expect(ok.success).toBe(true);
-    expect(createEvent.summarize!(ok.data)).toEqual({
+    expect(createEvent.summarize!(ok.data!)).toEqual({
       title: 'Create calendar event',
       details: {
         Title: 'Dentist',

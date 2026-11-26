@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { BriefingQueue } from './briefing-queue.service.js';
 import { NotificationSettings } from './notification-settings.entity.js';
 import { DEFAULT_SETTINGS, type ScheduleSettings } from './schedule.js';
 
@@ -9,6 +10,7 @@ export class NotificationsService {
   constructor(
     @InjectRepository(NotificationSettings)
     private readonly settings: Repository<NotificationSettings>,
+    private readonly queue: BriefingQueue,
   ) {}
 
   async get(userId: string): Promise<ScheduleSettings> {
@@ -23,7 +25,10 @@ export class NotificationsService {
       (await this.settings.findOneBy({ userId })) ??
       this.settings.create({ userId, ...DEFAULT_SETTINGS });
     Object.assign(row, patch);
-    return toView(await this.settings.save(row));
+    const saved = toView(await this.settings.save(row));
+    // New times take effect for the next run, today's included if still open.
+    this.queue.replan(userId);
+    return saved;
   }
 }
 

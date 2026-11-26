@@ -10,6 +10,14 @@ import { AuthService } from './../src/auth/auth.service.js';
 import { TrelloAccount } from './../src/trello/trello-account.entity.js';
 import { User } from './../src/users/user.entity.js';
 
+// ConfigModule reads the environment when AppModule is imported, so the test
+// key must be in place before the imports run (it wins over .env).
+const savedKey = vi.hoisted(() => {
+  const saved = process.env.TRELLO_API_KEY;
+  process.env.TRELLO_API_KEY = 'test-key';
+  return saved;
+});
+
 const GOOD = 'a'.repeat(64);
 const OTHER = 'b'.repeat(64);
 const BOARD = '1'.repeat(24);
@@ -72,14 +80,12 @@ describe('Trello connection (e2e)', () => {
   let app: INestApplication<App>;
   let db: DataSource;
   const realFetch = globalThis.fetch;
-  const savedKey = process.env.TRELLO_API_KEY;
   const userIds: string[] = [];
   let alice: string;
   let aliceId: string;
   let bob: string;
 
   beforeAll(async () => {
-    process.env.TRELLO_API_KEY = 'test-key';
     globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) =>
       String(input instanceof Request ? input.url : input).startsWith(
         'https://api.trello.com/',

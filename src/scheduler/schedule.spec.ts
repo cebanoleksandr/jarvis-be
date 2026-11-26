@@ -1,6 +1,6 @@
 import { localClock } from '../common/time.js';
 import { briefingPrompt, briefingTitle } from './briefing-prompts.js';
-import { DEFAULT_SETTINGS, dueKinds } from './schedule.js';
+import { briefingWindow, DEFAULT_SETTINGS, nextRun } from './schedule.js';
 
 const at = (iso: string, tz = 'Europe/Kyiv') => localClock(new Date(iso), tz);
 
@@ -27,59 +27,95 @@ describe('localClock', () => {
   });
 });
 
-describe('dueKinds', () => {
-  it('opens the morning window at the configured local time', () => {
-    expect(dueKinds(DEFAULT_SETTINGS, at('2026-11-12T05:59:00Z'))).toEqual([]);
-    expect(dueKinds(DEFAULT_SETTINGS, at('2026-11-12T06:00:00Z'))).toEqual([
-      'morning',
-    ]);
-  });
+const KYIV = 'Europe/Kyiv';
+const utc = (iso: string) => new Date(iso);
 
-  it('closes the window after the grace period', () => {
-    expect(dueKinds(DEFAULT_SETTINGS, at('2026-11-12T07:59:00Z'))).toEqual([
-      'morning',
-    ]);
-    expect(dueKinds(DEFAULT_SETTINGS, at('2026-11-12T08:00:00Z'))).toEqual([]);
+describe('briefingWindow', () => {
+  it('opens at the configured local time for the grace period', () => {
+    expect(
+      briefingWindow(DEFAULT_SETTINGS, 'morning', '2026-11-12', KYIV),
+    ).toEqual({
+      start: utc('2026-11-12T06:00:00Z'),
+      end: utc('2026-11-12T08:00:00Z'),
+    });
   });
 
   it('uses the user zone, not UTC', () => {
     // 08:00 in New York (UTC-5) is 13:00 UTC.
-    const ny = at('2026-11-12T13:00:00Z', 'America/New_York');
-    expect(dueKinds(DEFAULT_SETTINGS, ny)).toEqual(['morning']);
+    expect(
+      briefingWindow(
+        DEFAULT_SETTINGS,
+        'morning',
+        '2026-11-12',
+        'America/New_York',
+      )?.start,
+    ).toEqual(utc('2026-11-12T13:00:00Z'));
   });
 
-  it('sends the weekly review only on its weekday', () => {
-    // Sunday 2026-11-15, 18:30 in Kyiv.
-    expect(dueKinds(DEFAULT_SETTINGS, at('2026-11-15T16:30:00Z'))).toEqual([
-      'weekly',
-    ]);
-    expect(dueKinds(DEFAULT_SETTINGS, at('2026-11-14T16:30:00Z'))).toEqual([]);
-  });
-
-  it('respects disabled kinds and overlapping windows', () => {
-    const s = {
-      ...DEFAULT_SETTINGS,
-      morningEnabled: false,
-      eveningTime: '18:00',
-    };
-    expect(dueKinds(s, at('2026-11-12T06:00:00Z'))).toEqual([]);
-    expect(dueKinds(s, at('2026-11-15T16:30:00Z'))).toEqual([
-      'evening',
-      'weekly',
-    ]);
+  it('runs the weekly review only on its weekday, and nothing disabled', () => {
+    // Sunday 2026-11-15, 18:00 in Kyiv.
+    expect(
+      briefingWindow(DEFAULT_SETTINGS, 'weekly', '2026-11-15', KYIV)?.start,
+    ).toEqual(utc('2026-11-15T16:00:00Z'));
+    expect(
+      briefingWindow(DEFAULT_SETTINGS, 'weekly', '2026-11-14', KYIV),
+    ).toBeNull();
+    const off = { ...DEFAULT_SETTINGS, morningEnabled: false };
+    expect(briefingWindow(off, 'morning', '2026-11-12', KYIV)).toBeNull();
   });
 
   it('does not carry a late window past midnight', () => {
     const s = { ...DEFAULT_SETTINGS, eveningTime: '23:30' };
-    expect(dueKinds(s, at('2026-11-12T21:45:00Z'))).toEqual(['evening']);
-    // 00:10 the next local day.
-    expect(dueKinds(s, at('2026-11-12T22:10:00Z'))).toEqual([]);
+    expect(briefingWindow(s, 'evening', '2026-11-12', KYIV)).toEqual({
+      start: utc('2026-11-12T21:30:00Z'),
+      end: utc('2026-11-12T22:00:00Z'), // local midnight
+    });
   });
 
-  it('still fires when the configured time is skipped by DST', () => {
+  it('still opens when the configured time is skipped by DST', () => {
     // Kyiv jumps 03:00 -> 04:00 on 2026-03-29; 03:30 never exists.
     const s = { ...DEFAULT_SETTINGS, morningTime: '03:30' };
-    expect(dueKinds(s, at('2026-03-29T01:00:00Z'))).toEqual(['morning']);
+    const w = briefingWindow(s, 'morning', '2026-03-29', KYIV)!;
+    expect(localClock(w.start, KYIV)).toMatchObject({ date: '2026-03-29' });
+    expect(w.end > w.start).toBe(true);
+  });
+});
+
+describe('nextRun', () => {
+  it('is today while the window has not closed, then tomorrow', () => {
+    expect(
+      nextRun(DEFAULT_SETTINGS, 'morning', KYIV, utc('2026-11-12T05:00:00Z')),
+    ).toEqual({ localDate: '2026-11-12', at: utc('2026-11-12T06:00:00Z') });
+    // Inside the window: due right away (at is in the past).
+    expect(
+      nextRun(DEFAULT_SETTINGS, 'morning', KYIV, utc('2026-11-12T07:59:00Z')),
+    ).toEqual({ localDate: '2026-11-12', at: utc('2026-11-12T06:00:00Z') });
+    expect(
+      nextRun(DEFAULT_SETTINGS, 'morning', KYIV, utc('2026-11-12T08:00:00Z')),
+    ).toEqual({ localDate: '2026-11-13', at: utc('2026-11-13T06:00:00Z') });
+  });
+
+  it('skips dates already sent', () => {
+    expect(
+      nextRun(
+        DEFAULT_SETTINGS,
+        'morning',
+        KYIV,
+        utc('2026-11-12T06:30:00Z'),
+        new Set(['2026-11-12']),
+      ),
+    ).toEqual({ localDate: '2026-11-13', at: utc('2026-11-13T06:00:00Z') });
+  });
+
+  it('finds the weekly review up to a week ahead, nothing when disabled', () => {
+    // Monday 2026-11-16 morning -> next Sunday.
+    expect(
+      nextRun(DEFAULT_SETTINGS, 'weekly', KYIV, utc('2026-11-16T06:00:00Z')),
+    ).toEqual({ localDate: '2026-11-22', at: utc('2026-11-22T16:00:00Z') });
+    const off = { ...DEFAULT_SETTINGS, weeklyEnabled: false };
+    expect(
+      nextRun(off, 'weekly', KYIV, utc('2026-11-16T06:00:00Z')),
+    ).toBeNull();
   });
 });
 

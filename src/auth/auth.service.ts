@@ -12,6 +12,7 @@ import {
   type GoogleProfile,
   GoogleOAuthService,
 } from '../google/google-oauth.service.js';
+import { UserEvents } from '../users/user-events.js';
 import { User } from '../users/user.entity.js';
 import { OAUTH_FLOW_TTL_SECONDS } from './auth.constants.js';
 
@@ -36,6 +37,7 @@ export class AuthService {
     private readonly google: GoogleOAuthService,
     private readonly cipher: TokenCipher,
     @InjectDataSource() private readonly dataSource: DataSource,
+    private readonly userEvents: UserEvents,
   ) {
     this.sessionTtlSeconds =
       config.get('SESSION_TTL_DAYS', { infer: true }) * 24 * 60 * 60;
@@ -69,7 +71,10 @@ export class AuthService {
       params.code,
       flow.cv,
     );
-    return this.upsertGoogleUser(profile, tokens);
+    const user = await this.upsertGoogleUser(profile, tokens);
+    // A new user, or one back after a break: plan their briefings now.
+    this.userEvents.scheduleChanged(user.id);
+    return user;
   }
 
   issueSession(userId: string): Promise<string> {

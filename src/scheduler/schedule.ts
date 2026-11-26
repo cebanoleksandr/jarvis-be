@@ -1,4 +1,4 @@
-import type { LocalClock } from '../common/time.js';
+import { addDays, localClock, zonedToUtc } from '../common/time.js';
 
 export const BRIEFING_KINDS = ['morning', 'evening', 'weekly'] as const;
 export type BriefingKind = (typeof BRIEFING_KINDS)[number];
@@ -38,22 +38,60 @@ export function toMinutes(time: string): number {
   return h * 60 + m;
 }
 
+/** Briefings look this far ahead for their next run (covers a weekly one). */
+const LOOKAHEAD_DAYS = 8;
+
+const timeOf = (s: ScheduleSettings, kind: BriefingKind) =>
+  kind === 'morning'
+    ? { enabled: s.morningEnabled, time: s.morningTime }
+    : kind === 'evening'
+      ? { enabled: s.eveningEnabled, time: s.eveningTime }
+      : { enabled: s.weeklyEnabled, time: s.weeklyTime };
+
+/** 0 = Sunday ... 6 = Saturday, for a `YYYY-MM-DD` calendar date. */
+const weekdayOf = (date: string) => new Date(`${date}T00:00:00Z`).getUTCDay();
+
 /**
- * Briefings whose window is open at the user's local `clock`. The window never
- * crosses local midnight, so a run always belongs to `clock.date`.
+ * When `kind` may be sent for the user's local `date`: from its configured
+ * time until the grace period ends, but never past local midnight (a run
+ * always belongs to its own date). Null when it does not run that day.
  */
-export function dueKinds(
+export function briefingWindow(
   s: ScheduleSettings,
-  clock: LocalClock,
-): BriefingKind[] {
-  const open = (time: string) => {
-    const start = toMinutes(time);
-    return clock.minutes >= start && clock.minutes < start + GRACE_MINUTES;
-  };
-  const due: BriefingKind[] = [];
-  if (s.morningEnabled && open(s.morningTime)) due.push('morning');
-  if (s.eveningEnabled && open(s.eveningTime)) due.push('evening');
-  if (s.weeklyEnabled && clock.weekday === s.weeklyDay && open(s.weeklyTime))
-    due.push('weekly');
-  return due;
+  kind: BriefingKind,
+  date: string,
+  tz: string,
+): { start: Date; end: Date } | null {
+  const { enabled, time } = timeOf(s, kind);
+  if (!enabled) return null;
+  if (kind === 'weekly' && weekdayOf(date) !== s.weeklyDay) return null;
+  const start = zonedToUtc(`${date}T${time}`, tz);
+  const midnight = zonedToUtc(addDays(date, 1), tz);
+  const end = new Date(
+    Math.min(start.getTime() + GRACE_MINUTES * 60_000, midnight.getTime()),
+  );
+  return { start, end };
+}
+
+/**
+ * The next run of `kind` after `now`: the first local date whose window has
+ * not closed yet and that is not in `done` (already sent or claimed). `at` is
+ * the window start, possibly already past (then the run is due right away).
+ */
+export function nextRun(
+  s: ScheduleSettings,
+  kind: BriefingKind,
+  tz: string,
+  now: Date,
+  done: ReadonlySet<string> = new Set(),
+): { localDate: string; at: Date } | null {
+  const today = localClock(now, tz).date;
+  for (let i = 0; i <= LOOKAHEAD_DAYS; i++) {
+    const date = addDays(today, i);
+    if (done.has(date)) continue;
+    const window = briefingWindow(s, kind, date, tz);
+    if (window && now < window.end)
+      return { localDate: date, at: window.start };
+  }
+  return null;
 }

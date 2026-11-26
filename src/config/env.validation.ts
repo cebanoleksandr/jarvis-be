@@ -46,6 +46,9 @@ const envSchema = z.object({
     .default('medium'),
   LLM_MAX_TOKENS: z.coerce.number().int().positive().default(64000),
 
+  /** Redis for the briefing queue (BullMQ). */
+  REDIS_URL: z.url().default('redis://localhost:6381'),
+
   /** Morning briefings, evening check-ins and weekly reviews. Never runs under NODE_ENV=test. */
   SCHEDULER_ENABLED: z
     .enum(['true', 'false'])
