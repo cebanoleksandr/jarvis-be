@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import type { z } from 'zod';
 import { GoogleToolsService } from '../google/google-tools.service.js';
+import { TrelloToolsService } from '../trello/trello-tools.service.js';
 import type { ToolSpec } from '../llm/llm.types.js';
 import {
   type AnyTool,
@@ -25,8 +26,8 @@ export class ToolRegistry {
   private readonly tools = new Map<string, AnyTool>();
   private readonly toolSpecs: ToolSpec[];
 
-  constructor(google: GoogleToolsService) {
-    for (const tool of google.tools) this.register(tool);
+  constructor(google: GoogleToolsService, trello: TrelloToolsService) {
+    for (const tool of [...google.tools, ...trello.tools]) this.register(tool);
     // Sorted so the tool list (the start of the prompt) is byte-stable for caching.
     this.toolSpecs = [...this.tools.values()]
       .sort((a, b) => a.name.localeCompare(b.name))

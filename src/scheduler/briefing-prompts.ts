@@ -19,15 +19,15 @@ const TITLES: Record<BriefingKind, string> = {
 };
 
 const TASKS: Record<BriefingKind, string> = {
-  morning: `Write the user's morning briefing. First look up today's calendar events and their open tasks. Then cover:
+  morning: `Write the user's morning briefing. First look up today's calendar events and their open tasks, and, if Trello is connected, the Trello cards due today or overdue. Then cover:
 - today's schedule in order, with the free slots worth using;
 - one to three priorities for today, tied to their goals where it fits;
-- tasks that are due today or overdue.`,
+- tasks and Trello cards that are due today or overdue.`,
   evening: `Write the user's evening check-in. First look up today's calendar events and their tasks. Then:
 - sum up briefly what was on today's plan;
 - ask how the day went and what got done, with one or two specific questions rather than a generic one;
 - mention what is already scheduled for tomorrow, if anything.`,
-  weekly: `Write the user's weekly review. First look up the calendar for the past seven days and the coming seven, and their tasks. Then cover:
+  weekly: `Write the user's weekly review. First look up the calendar for the past seven days and the coming seven, their tasks, and, if Trello is connected, the Trello cards due in the coming seven days. Then cover:
 - what the past week was spent on and which tasks were completed;
 - where each active goal stands, and which ones got no attention;
 - two or three concrete suggestions for the coming week;

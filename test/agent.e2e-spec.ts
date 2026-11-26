@@ -11,6 +11,7 @@ import { PendingAction } from './../src/agent/pending-action.entity.js';
 import { defineTool, ToolError } from './../src/agent/tool.js';
 import { AuthService } from './../src/auth/auth.service.js';
 import { GoogleToolsService } from './../src/google/google-tools.service.js';
+import { TrelloToolsService } from './../src/trello/trello-tools.service.js';
 import {
   type ChatRequest,
   type ChatResult,
@@ -176,6 +177,8 @@ describe('Agent loop and confirmations (e2e)', () => {
       .useValue(llm)
       .overrideProvider(GoogleToolsService)
       .useValue({ tools: testTools })
+      .overrideProvider(TrelloToolsService)
+      .useValue({ tools: [] })
       .compile();
     app = moduleFixture.createNestApplication();
     configureApp(app);

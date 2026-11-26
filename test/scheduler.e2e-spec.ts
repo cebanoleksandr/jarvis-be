@@ -12,6 +12,7 @@ import { defineTool } from './../src/agent/tool.js';
 import { AuthService } from './../src/auth/auth.service.js';
 import { Conversation } from './../src/chat/conversation.entity.js';
 import { GoogleToolsService } from './../src/google/google-tools.service.js';
+import { TrelloToolsService } from './../src/trello/trello-tools.service.js';
 import {
   type ChatRequest,
   type ChatStreamEvent,
@@ -130,6 +131,8 @@ describe('Scheduler (e2e)', () => {
       .useValue(llm)
       .overrideProvider(GoogleToolsService)
       .useValue({ tools: testTools })
+      .overrideProvider(TrelloToolsService)
+      .useValue({ tools: [] })
       .compile();
     app = moduleFixture.createNestApplication();
     configureApp(app);

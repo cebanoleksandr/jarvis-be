@@ -62,6 +62,22 @@ describe('buildSystemPrompt', () => {
     );
   });
 
+  it('tells the model whether Trello is connected, only when available', () => {
+    expect(buildSystemPrompt(ctx)).not.toContain('Trello:');
+    expect(
+      buildSystemPrompt({
+        ...ctx,
+        trello: { connected: true, username: 'ann' },
+      }),
+    ).toContain('Trello: connected as @ann');
+    expect(
+      buildSystemPrompt({
+        ...ctx,
+        trello: { connected: false, username: null },
+      }),
+    ).toContain('Trello: not connected');
+  });
+
   it('is identical within the same local day (cache-stable)', () => {
     const a = buildSystemPrompt(ctx, new Date('2026-11-06T12:00:00Z'));
     const b = buildSystemPrompt(ctx, new Date('2026-11-06T13:30:00Z'));

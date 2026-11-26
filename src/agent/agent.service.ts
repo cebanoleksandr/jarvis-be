@@ -26,6 +26,7 @@ import { MemoriesService } from '../memory/memories.service.js';
 import { User } from '../users/user.entity.js';
 import { UsersService } from '../users/users.service.js';
 import { PendingAction } from './pending-action.entity.js';
+import { TrelloConnectionService } from '../trello/trello-connection.service.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import type { ToolContext } from './tool.js';
 import {
@@ -78,6 +79,7 @@ export class AgentService {
     private readonly memories: MemoriesService,
     private readonly llm: LlmProvider,
     private readonly registry: ToolRegistry,
+    private readonly trello: TrelloConnectionService,
   ) {}
 
   /**
@@ -322,12 +324,20 @@ export class AgentService {
     conversationId: string,
     signal: AbortSignal,
   ): AsyncGenerator<AgentEvent> {
-    const [profile, goals, memories] = await Promise.all([
+    const [profile, goals, memories, trello] = await Promise.all([
       this.users.getProfile(userId),
       this.goals.list(userId),
       this.memories.list(userId),
+      this.trello.status(userId),
     ]);
-    const system = buildSystemPrompt({ profile, goals, memories });
+    const system = buildSystemPrompt({
+      profile,
+      goals,
+      memories,
+      trello: trello.available
+        ? { connected: trello.connected, username: trello.username }
+        : null,
+    });
     const ctx: ToolContext = { userId, timezone: profile.timezone };
 
     for (let step = 0; step < MAX_STEPS; step++) {

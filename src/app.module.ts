@@ -9,6 +9,7 @@ import { DatabaseModule } from './database/database.module.js';
 import { HealthModule } from './health/health.module.js';
 import { MemoryModule } from './memory/memory.module.js';
 import { SchedulerModule } from './scheduler/scheduler.module.js';
+import { TrelloModule } from './trello/trello.module.js';
 
 @Module({
   imports: [
@@ -24,6 +25,7 @@ import { SchedulerModule } from './scheduler/scheduler.module.js';
     ChatModule,
     MemoryModule,
     SchedulerModule,
+    TrelloModule,
     HealthModule,
   ],
 })

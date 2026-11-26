@@ -62,12 +62,18 @@ export function defineTool<S extends z.ZodType>(
 
 /** An error whose message is safe to show to the model and the user. */
 export class ToolError extends Error {
-  /** True when only signing in with Google again can fix it. */
+  /** True when only reconnecting the service (see `provider`) can fix it. */
   readonly reauthRequired: boolean;
+  /** The service the error came from; reconnecting it is the fix. */
+  readonly provider: 'google' | 'trello';
 
-  constructor(message: string, options: { reauthRequired?: boolean } = {}) {
+  constructor(
+    message: string,
+    options: { reauthRequired?: boolean; provider?: 'google' | 'trello' } = {},
+  ) {
     super(message);
     this.reauthRequired = options.reauthRequired ?? false;
+    this.provider = options.provider ?? 'google';
   }
 }
 

@@ -23,6 +23,12 @@ const envSchema = z.object({
   GOOGLE_CLIENT_SECRET: z.string().min(1),
   GOOGLE_CALLBACK_URL: z.url(),
 
+  /**
+   * Trello API key (trello.com/power-ups/admin). Without it the Trello
+   * connection is hidden; with it, FRONTEND_URL must be an allowed origin.
+   */
+  TRELLO_API_KEY: z.string().min(1).optional(),
+
   /** AES-256-GCM key for OAuth tokens at rest. */
   TOKEN_ENC_KEY: base64Key32,
   /** HMAC secret for session JWTs. */

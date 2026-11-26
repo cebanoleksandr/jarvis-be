@@ -5,6 +5,7 @@ import { PendingAction } from '../agent/pending-action.entity.js';
 import { Conversation } from '../chat/conversation.entity.js';
 import { Message } from '../chat/message.entity.js';
 import { GoogleConnectionService } from '../google/google-connection.service.js';
+import { TrelloConnectionService } from '../trello/trello-connection.service.js';
 import { Goal } from '../memory/goal.entity.js';
 import { Memory } from '../memory/memory.entity.js';
 import { NotificationSettings } from '../scheduler/notification-settings.entity.js';
@@ -23,6 +24,7 @@ export class AccountService {
   constructor(
     @InjectDataSource() private readonly db: DataSource,
     private readonly google: GoogleConnectionService,
+    private readonly trello: TrelloConnectionService,
   ) {}
 
   /** Everything stored about the user, as plain JSON. OAuth tokens are never included. */
@@ -70,6 +72,7 @@ export class AccountService {
       user: strip(user, 'lastActiveAt'),
       profile: profile && strip(profile),
       google: await this.google.status(userId),
+      trello: await this.trello.status(userId),
       notificationSettings: notifications && strip(notifications),
       goals: goals.map((g) => strip(g, 'parent')),
       memories: memories.map((m) => strip(m)),
@@ -87,10 +90,11 @@ export class AccountService {
 
   /**
    * Deletes the account and all its data (every table cascades from users),
-   * after revoking Google access.
+   * after revoking Google and Trello access.
    */
   async delete(userId: string): Promise<void> {
     await this.google.disconnect(userId);
+    await this.trello.disconnect(userId);
     await this.db.getRepository(User).delete({ id: userId });
   }
 }

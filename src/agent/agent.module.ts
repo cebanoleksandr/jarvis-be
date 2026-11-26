@@ -5,6 +5,7 @@ import { Message } from '../chat/message.entity.js';
 import { GoogleModule } from '../google/google.module.js';
 import { LlmModule } from '../llm/llm.module.js';
 import { MemoryModule } from '../memory/memory.module.js';
+import { TrelloModule } from '../trello/trello.module.js';
 import { UsersModule } from '../users/users.module.js';
 import { AgentService } from './agent.service.js';
 import { PendingAction } from './pending-action.entity.js';
@@ -18,6 +19,7 @@ import { ToolRegistry } from './tool-registry.service.js';
     UsersModule,
     MemoryModule,
     GoogleModule,
+    TrelloModule,
   ],
   controllers: [PendingActionsController],
   providers: [AgentService, ToolRegistry],
