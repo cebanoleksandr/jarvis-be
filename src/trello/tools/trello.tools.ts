@@ -14,7 +14,7 @@ const DEFAULT_DUE_TIME = '12:00';
 const MAX_BOARDS = 20;
 const MAX_CARDS = 100;
 const CARD_FIELDS =
-  'name,desc,due,dueComplete,idList,idBoard,url,labels,closed';
+  'name,desc,due,dueComplete,idList,idBoard,url,labels,closed,dateLastActivity';
 
 const truncate = (s: string | null | undefined, n: number) =>
   s && s.length > n ? `${s.slice(0, n)}…` : s || undefined;
@@ -31,6 +31,8 @@ interface ApiCard {
   url?: string;
   closed?: boolean;
   labels?: { name?: string; color?: string | null }[];
+  /** Last change to the card; Trello keeps no separate completion time. */
+  dateLastActivity?: string;
 }
 
 interface ApiBoard {
@@ -58,6 +60,43 @@ export interface TrelloCard {
   list: { id: string; name: string };
   labels: string[];
   link?: string;
+}
+
+/** List names that mean "finished", in the languages the app supports. */
+const DONE_WORDS = new Set([
+  'done',
+  'complete',
+  'completed',
+  'finished',
+  'готово',
+  'сделано',
+  'выполнено',
+  'завершено',
+  'зроблено',
+  'виконано',
+  'hecho',
+  'terminado',
+  'completado',
+  'gotowe',
+  'zrobione',
+  'ukończone',
+  'zakończone',
+]);
+const NEGATIONS = new Set(['not', 'no', 'не', 'ні', 'nie']);
+
+/**
+ * True for lists like "Done", "✅ Готово" or "Done this week": many boards
+ * finish a card by moving it there without ticking its due date. "Not done"
+ * and the like are not done lists.
+ */
+export function isDoneList(name: string): boolean {
+  const words = name
+    .toLowerCase()
+    .split(/[^\p{L}\p{N}]+/u)
+    .filter(Boolean);
+  return words.some(
+    (w, i) => DONE_WORDS.has(w) && !(i > 0 && NEGATIONS.has(words[i - 1])),
+  );
 }
 
 /** UTC instant from Trello -> `YYYY-MM-DDTHH:MM` in `tz`. */
@@ -126,8 +165,16 @@ export interface CardFilter {
   listId?: string;
   /** Cards the user is a member of, across boards. */
   assignedToMe?: boolean;
-  /** Not done and due before the end of today + N days, overdue included. */
+  /**
+   * Not done and due before the end of today + N days, overdue included.
+   * Cards in a done list (see isDoneList) count as done.
+   */
   dueWithinDays?: number;
+  /**
+   * With dueWithinDays: also the cards ticked done today (outside done
+   * lists), so a checklist of the day keeps showing them as finished.
+   */
+  includeDoneToday?: boolean;
 }
 
 /**
@@ -178,8 +225,19 @@ export async function fetchCards(
   if (filter.dueWithinDays !== undefined) {
     const today = localClock(new Date(), tz).date;
     const until = zonedToUtc(addDays(today, filter.dueWithinDays + 1), tz);
+    const listName = (c: ApiCard) =>
+      boards.get(c.idBoard)?.lists.find((l) => l.id === c.idList)?.name ?? '';
+    const doneToday = (c: ApiCard) =>
+      !!c.dateLastActivity &&
+      localClock(new Date(c.dateLastActivity), tz).date === today;
     cards = cards
-      .filter((c) => c.due && !c.dueComplete && new Date(c.due) < until)
+      .filter(
+        (c) =>
+          c.due &&
+          new Date(c.due) < until &&
+          !isDoneList(listName(c)) &&
+          (!c.dueComplete || (filter.includeDoneToday && doneToday(c))),
+      )
       .sort((a, b) => Date.parse(a.due!) - Date.parse(b.due!));
   }
   return {
@@ -325,7 +383,8 @@ export function trelloTools(client: TrelloClientService) {
     name: 'list_trello_cards',
     description:
       'List open Trello cards: of one list (listId), of one board (boardId), the ones the user is a member of ' +
-      '(assignedToMe), or with dueWithinDays the cards not done yet that are due by the end of today + N days, ' +
+      '(assignedToMe), or with dueWithinDays the cards not done yet (not ticked and not in a list like "Done") ' +
+      'that are due by the end of today + N days, ' +
       `overdue included, across the user's boards (first ${MAX_BOARDS}). Due times are local to the user's timezone.`,
     mutating: false,
     input: z

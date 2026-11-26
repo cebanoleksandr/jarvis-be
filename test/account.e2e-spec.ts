@@ -6,7 +6,8 @@ import request from 'supertest';
 import { App } from 'supertest/types.js';
 import { AppModule } from './../src/app.module.js';
 import { configureApp } from './../src/app.setup.js';
-import { ToolError } from './../src/agent/tool.js';
+import { z } from 'zod';
+import { defineTool, ToolError } from './../src/agent/tool.js';
 import { AuthService } from './../src/auth/auth.service.js';
 import { Conversation } from './../src/chat/conversation.entity.js';
 import { Message } from './../src/chat/message.entity.js';
@@ -19,6 +20,7 @@ import {
 } from './../src/google/google-client.service.js';
 import { GoogleDataService } from './../src/google/google-data.service.js';
 import { GoogleOAuthService } from './../src/google/google-oauth.service.js';
+import { GoogleToolsService } from './../src/google/google-tools.service.js';
 import { Goal } from './../src/memory/goal.entity.js';
 import { Memory } from './../src/memory/memory.entity.js';
 import { User } from './../src/users/user.entity.js';
@@ -41,6 +43,27 @@ class FakeGoogleData {
   }
 }
 
+/** Stand-in for the real update_task, which would call Google. */
+const taskUpdates: unknown[][] = [];
+const fakeUpdateTask = defineTool({
+  name: 'update_task',
+  description: 'test',
+  mutating: true,
+  input: z
+    .object({
+      taskId: z.string().regex(/^[\w-]{1,200}$/),
+      status: z.enum(['needsAction', 'completed']).optional(),
+    })
+    .strict(),
+  summarize: () => ({ title: 'Change task', details: {} }),
+  async execute(ctx, v) {
+    taskUpdates.push([ctx.userId, ctx.timezone, v]);
+    if (v.taskId === 'gone')
+      throw new ToolError('Not found in Google: the task was deleted.');
+    return { id: v.taskId, status: v.status };
+  },
+});
+
 describe('Google data, connection and account (e2e)', () => {
   let app: INestApplication<App>;
   let db: DataSource;
@@ -54,6 +77,8 @@ describe('Google data, connection and account (e2e)', () => {
     })
       .overrideProvider(GoogleDataService)
       .useValue(data)
+      .overrideProvider(GoogleToolsService)
+      .useValue({ tools: [fakeUpdateTask] })
       .overrideProvider(GoogleOAuthService)
       .useValue({
         revoke: async (token: string) => {
@@ -185,6 +210,38 @@ describe('Google data, connection and account (e2e)', () => {
         .get('/api/tasks?includeCompleted=yes')
         .set('Cookie', cookie)
         .expect(400);
+    });
+  });
+
+  describe('PATCH /tasks/:id', () => {
+    it('completes and reopens a task through update_task', async () => {
+      const { user, cookie } = await makeUser();
+      await http()
+        .patch('/api/tasks/t1')
+        .set('Cookie', cookie)
+        .send({ done: true })
+        .expect(200, { id: 't1', done: true });
+      await http()
+        .patch('/api/tasks/t1')
+        .set('Cookie', cookie)
+        .send({ done: false })
+        .expect(200, { id: 't1', done: false });
+      expect(taskUpdates.slice(-2)).toEqual([
+        [user.id, user.timezone, { taskId: 't1', status: 'completed' }],
+        [user.id, user.timezone, { taskId: 't1', status: 'needsAction' }],
+      ]);
+
+      await http()
+        .patch('/api/tasks/gone')
+        .set('Cookie', cookie)
+        .send({ done: true })
+        .expect(502);
+      await http()
+        .patch('/api/tasks/t1')
+        .set('Cookie', cookie)
+        .send({ done: 1 })
+        .expect(400);
+      await http().patch('/api/tasks/t1').send({ done: true }).expect(401);
     });
   });
 

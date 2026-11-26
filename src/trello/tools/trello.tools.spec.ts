@@ -2,7 +2,8 @@ import type { TrelloClientService } from '../trello-client.service.js';
 import { trelloError } from '../trello-client.service.js';
 import {
   dueToTrello,
-  type fetchCards,
+  fetchCards,
+  isDoneList,
   localDue,
   trelloTools,
 } from './trello.tools.js';
@@ -130,6 +131,71 @@ describe('read tools', () => {
         dueWithinDays: 7,
       })) as Cards;
       expect(week.cards).toHaveLength(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe('done lists', () => {
+  it('recognises done lists in the supported languages', () => {
+    for (const name of [
+      'Done',
+      '✅ Done',
+      'Done this week',
+      'Готово',
+      'Сделано!',
+      'Виконано',
+      'Hecho',
+      'Gotowe',
+      'Planning / Completed',
+    ]) {
+      expect(isDoneList(name), name).toBe(true);
+    }
+    for (const name of [
+      'To do',
+      'Doing',
+      'Not done',
+      'Не сделано',
+      'Nie zrobione',
+      'Undone',
+      '',
+    ]) {
+      expect(isDoneList(name), name).toBe(false);
+    }
+  });
+
+  it('due cards skip done lists and show ticked ones only when done today', async () => {
+    vi.useFakeTimers({ now: new Date('2026-11-26T08:00:00Z') });
+    try {
+      const moved = { ...card, id: 'd'.repeat(24), idList: L2 };
+      const tickedToday = {
+        ...card,
+        id: 'e'.repeat(24),
+        dueComplete: true,
+        dateLastActivity: '2026-11-26T07:00:00Z',
+      };
+      const tickedYesterday = {
+        ...tickedToday,
+        id: 'f'.repeat(24),
+        dateLastActivity: '2026-11-25T07:00:00Z',
+      };
+      const movedAndTicked = { ...tickedToday, id: '9'.repeat(24), idList: L2 };
+      request.mockImplementation(
+        async (_u: string, _m: string, path: string) =>
+          path === '/members/me/boards'
+            ? [board]
+            : [card, moved, tickedToday, tickedYesterday, movedAndTicked],
+      );
+      const ids = async (includeDoneToday?: boolean) =>
+        (
+          await fetchCards(client, 'u1', 'Europe/Kyiv', {
+            dueWithinDays: 0,
+            includeDoneToday,
+          })
+        ).cards.map((c) => c.id);
+      expect(await ids()).toEqual([C]);
+      expect(await ids(true)).toEqual([C, 'e'.repeat(24)]);
     } finally {
       vi.useRealTimers();
     }

@@ -22,6 +22,8 @@ const GOOD = 'a'.repeat(64);
 const OTHER = 'b'.repeat(64);
 const BOARD = '1'.repeat(24);
 const LIST = '2'.repeat(24);
+const DONE_LIST = '3'.repeat(24);
+const CARD = 'c'.repeat(24);
 
 /** Stand-in for api.trello.com; everything else goes to the real fetch. */
 const trello = {
@@ -29,6 +31,8 @@ const trello = {
   calls: [] as { method: string; path: string; auth: string | null }[],
   /** Tokens Trello accepts. */
   valid: new Set([GOOD, OTHER]),
+  /** The card's done tick, changed by PUT /cards/:id. */
+  dueComplete: false,
 };
 
 function fakeTrello(input: string | URL | Request, init?: RequestInit) {
@@ -58,21 +62,51 @@ function fakeTrello(input: string | URL | Request, init?: RequestInit) {
   }
   if (p === '/members/me/boards')
     return json([
-      { id: BOARD, name: 'Home', lists: [{ id: LIST, name: 'To do' }] },
-    ]);
-  if (p === `/boards/${BOARD}/cards/open`)
-    return json([
       {
-        id: 'c'.repeat(24),
-        name: 'Overdue card',
-        due: '2020-01-01T10:00:00.000Z',
-        dueComplete: false,
-        idList: LIST,
-        idBoard: BOARD,
-        url: 'https://trello.com/c/x',
-        labels: [],
+        id: BOARD,
+        name: 'Home',
+        lists: [
+          { id: LIST, name: 'To do' },
+          { id: DONE_LIST, name: '✅ Done' },
+        ],
       },
     ]);
+  const overdue = {
+    id: CARD,
+    name: 'Overdue card',
+    due: '2020-01-01T10:00:00.000Z',
+    dueComplete: trello.dueComplete,
+    idList: LIST,
+    idBoard: BOARD,
+    url: 'https://trello.com/c/x',
+    labels: [],
+    dateLastActivity: new Date().toISOString(),
+  };
+  if (p === `/boards/${BOARD}/cards/open`)
+    return json([
+      overdue,
+      // Finished by moving it, without ticking the due date.
+      {
+        ...overdue,
+        id: 'd'.repeat(24),
+        name: 'Moved to Done',
+        dueComplete: false,
+        idList: DONE_LIST,
+      },
+    ]);
+  if (p === `/cards/${CARD}` && method === 'GET')
+    return json({
+      ...overdue,
+      board: { name: 'Home' },
+      list: { name: 'To do' },
+    });
+  if (p === `/cards/${CARD}` && method === 'PUT') {
+    const body = JSON.parse(init?.body as string) as {
+      dueComplete?: boolean;
+    };
+    if (body.dueComplete !== undefined) trello.dueComplete = body.dueComplete;
+    return json({ ...overdue, dueComplete: trello.dueComplete });
+  }
   return json({ message: 'not found' }, 404);
 }
 
@@ -220,6 +254,60 @@ describe('Trello connection (e2e)', () => {
     expect(
       await db.getRepository(TrelloAccount).countBy({ userId: aliceId }),
     ).toBe(0);
+  });
+
+  it('ticks a due card done and back from the Today page', async () => {
+    const { state } = await start();
+    await connect(GOOD, state).expect(200);
+    const due = (query = '') =>
+      http()
+        .get(`/api/trello/cards/due${query}`)
+        .set('Cookie', alice)
+        .expect(200)
+        .then((r) => r.body.cards as { name: string; dueComplete: boolean }[]);
+
+    const done = await http()
+      .patch(`/api/trello/cards/${CARD}`)
+      .set('Cookie', alice)
+      .send({ done: true })
+      .expect(200);
+    expect(done.body).toEqual({ id: CARD, done: true });
+    expect(trello.calls.at(-1)).toMatchObject({
+      method: 'PUT',
+      path: `/1/cards/${CARD}`,
+    });
+    // Gone from the open cards, still listed as finished today on request.
+    expect(await due()).toEqual([]);
+    expect(await due('?includeDoneToday=true')).toEqual([
+      expect.objectContaining({ name: 'Overdue card', dueComplete: true }),
+    ]);
+
+    await http()
+      .patch(`/api/trello/cards/${CARD}`)
+      .set('Cookie', alice)
+      .send({ done: false })
+      .expect(200, { id: CARD, done: false });
+    expect((await due()).map((c) => c.name)).toEqual(['Overdue card']);
+
+    for (const [id, body] of [
+      ['not-an-id', { done: true }],
+      [CARD, { done: 'yes' }],
+      [CARD, { done: true, name: 'x' }],
+    ] as const) {
+      await http()
+        .patch(`/api/trello/cards/${id}`)
+        .set('Cookie', alice)
+        .send(body)
+        .expect(400);
+    }
+    await http()
+      .patch(`/api/trello/cards/${CARD}`)
+      .send({ done: true })
+      .expect(401);
+    await http()
+      .delete('/api/trello/connection')
+      .set('Cookie', alice)
+      .expect(204);
   });
 
   it('asks to reconnect when Trello revoked the token', async () => {

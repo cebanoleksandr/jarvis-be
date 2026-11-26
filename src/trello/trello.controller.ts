@@ -4,6 +4,9 @@ import {
   Delete,
   Get,
   HttpCode,
+  NotFoundException,
+  Param,
+  Patch,
   Post,
   Query,
 } from '@nestjs/common';
@@ -14,6 +17,7 @@ import { fromGoogle as fromService } from '../google/google-errors.js';
 import { UsersService } from '../users/users.service.js';
 import { TrelloClientService } from './trello-client.service.js';
 import { TrelloConnectionService } from './trello-connection.service.js';
+import { TrelloToolsService } from './trello-tools.service.js';
 import { fetchCards } from './tools/trello.tools.js';
 
 const connectSchema = z
@@ -26,12 +30,20 @@ const connectSchema = z
 const dueQuerySchema = z
   .object({
     days: z.coerce.number().int().min(0).max(14).default(0),
+    /** Also the cards ticked done today, for the Today checklist. */
+    includeDoneToday: z
+      .enum(['true', 'false'])
+      .default('false')
+      .transform((v) => v === 'true'),
   })
   .strict();
 
+const doneSchema = z.object({ done: z.boolean() }).strict();
+
 /**
- * The Trello connection and read-only card data for the UI. Changes to
- * Trello go through the agent and its confirmation cards.
+ * The Trello connection and card data for the UI. Changes to Trello go
+ * through the agent and its confirmation cards, except ticking a card done
+ * on the Today page: there the user's own click is the confirmation.
  */
 @Controller('trello')
 export class TrelloController {
@@ -39,6 +51,7 @@ export class TrelloController {
     private readonly connection: TrelloConnectionService,
     private readonly client: TrelloClientService,
     private readonly users: UsersService,
+    private readonly tools: TrelloToolsService,
   ) {}
 
   @Get('connection')
@@ -70,10 +83,31 @@ export class TrelloController {
   /** Open cards due by the end of today + `days` (overdue included). */
   @Get('cards/due')
   async due(@CurrentUserId() userId: string, @Query() query: unknown) {
-    const { days } = parseBody(dueQuerySchema, query);
+    const { days, includeDoneToday } = parseBody(dueQuerySchema, query);
     const { timezone } = await this.users.getProfile(userId);
     return fromService(() =>
-      fetchCards(this.client, userId, timezone, { dueWithinDays: days }),
+      fetchCards(this.client, userId, timezone, {
+        dueWithinDays: days,
+        includeDoneToday,
+      }),
     );
+  }
+
+  /** Ticks the card's due date done (or not), as the checkbox in Trello does. */
+  @Patch('cards/:id')
+  async setDone(
+    @CurrentUserId() userId: string,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    const { done } = parseBody(doneSchema, body);
+    const tool = this.tools.tools.find((t) => t.name === 'update_trello_card');
+    if (!tool) throw new NotFoundException('Trello is not available');
+    const input = parseBody(tool.input, { cardId: id, dueComplete: done });
+    const { timezone } = await this.users.getProfile(userId);
+    const card = (await fromService(() =>
+      tool.execute({ userId, timezone }, input),
+    )) as { id: string; dueComplete: boolean };
+    return { id: card.id, done: card.dueComplete };
   }
 }
