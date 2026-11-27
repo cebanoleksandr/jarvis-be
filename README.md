@@ -67,7 +67,8 @@ Docker build downloads the frontend from the `main` branch of
 1. **Neon**: create a project (region close to Frankfurt) and copy the
    connection string (`...?sslmode=require`). Migrations run on start.
 2. **Render**: New -> Blueprint -> this repo. `render.yaml` creates the web
-   service `jarvis` and the Key Value `jarvis-redis`. Fill in `DATABASE_URL`,
+   service `jarvis`. Fill in `DATABASE_URL`, `REDIS_URL` (Internal URL of a
+   Key Value in the same region; its maxmemory policy must be `noeviction`),
    `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `TOKEN_ENC_KEY`
    (`openssl rand -base64 32`), `ANTHROPIC_API_KEY`, and optionally
    `TRELLO_API_KEY`, `VITE_OPERATOR_NAME`, `VITE_PRIVACY_EMAIL`.
