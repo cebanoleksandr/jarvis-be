@@ -8,6 +8,15 @@ import { DataSource } from 'typeorm';
 export class HealthController {
   constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
 
+  /**
+   * Liveness without touching the database: for uptime pingers that keep a
+   * free instance awake, so the serverless database can still scale to zero.
+   */
+  @Get('live')
+  live() {
+    return { status: 'ok' };
+  }
+
   @Get()
   async check() {
     try {

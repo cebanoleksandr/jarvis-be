@@ -18,6 +18,11 @@ const envSchema = z.object({
     .transform((v) => v === 'true'),
 
   FRONTEND_URL: z.url().default('http://localhost:5173'),
+  /**
+   * Built frontend to serve from the API's origin (set by the Dockerfile).
+   * Skipped when unset or when the folder has no index.html.
+   */
+  WEB_DIST: z.string().min(1).optional(),
 
   GOOGLE_CLIENT_ID: z.string().min(1),
   GOOGLE_CLIENT_SECRET: z.string().min(1),
@@ -82,8 +87,25 @@ const checkedSchema = envSchema
 
 export type Env = z.infer<typeof checkedSchema>;
 
+/**
+ * On Render the public URL is known (RENDER_EXTERNAL_URL), and the frontend
+ * is served from the same origin, so both URLs default to it.
+ */
+function withHostDefaults(
+  config: Record<string, unknown>,
+): Record<string, unknown> {
+  const origin = config.RENDER_EXTERNAL_URL;
+  if (typeof origin !== 'string' || !origin) return config;
+  return {
+    ...config,
+    FRONTEND_URL: config.FRONTEND_URL || origin,
+    GOOGLE_CALLBACK_URL:
+      config.GOOGLE_CALLBACK_URL || `${origin}/api/auth/google/callback`,
+  };
+}
+
 export function validateEnv(config: Record<string, unknown>): Env {
-  const result = checkedSchema.safeParse(config);
+  const result = checkedSchema.safeParse(withHostDefaults(config));
   if (!result.success) {
     throw new Error(
       `Invalid environment variables:\n${z.prettifyError(result.error)}`,

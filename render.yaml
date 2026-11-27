@@ -1,0 +1,55 @@
+# Render Blueprint: Dashboard -> New -> Blueprint -> this repo.
+# Free plan: one web service (API + frontend on one origin) and one Key Value.
+# Postgres lives on Neon (free); paste its connection string as DATABASE_URL.
+services:
+  - type: web
+    name: jarvis
+    runtime: docker
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    # No database query: uptime pings must not keep Neon awake.
+    healthCheckPath: /api/health/live
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Neon -> Connect -> connection string (keep ?sslmode=require).
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: jarvis-redis
+          property: connectionString
+      # FRONTEND_URL and GOOGLE_CALLBACK_URL default to RENDER_EXTERNAL_URL.
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      # openssl rand -base64 32. Keep it: changing it locks stored tokens.
+      - key: TOKEN_ENC_KEY
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      # Optional: leave empty to hide Trello.
+      - key: TRELLO_API_KEY
+        sync: false
+      # Shown in the privacy policy (build-time; redeploy after changing).
+      - key: VITE_OPERATOR_NAME
+        sync: false
+      - key: VITE_PRIVACY_EMAIL
+        sync: false
+
+  # Briefing queue. Free Key Value keeps data in memory only; that is fine:
+  # runs are recorded in Postgres and the hourly reconcile re-plans the jobs.
+  - type: keyvalue
+    name: jarvis-redis
+    plan: free
+    region: frankfurt
+    # BullMQ needs keys never to be evicted.
+    maxmemoryPolicy: noeviction
+    # Reachable only from services in this workspace.
+    ipAllowList: []

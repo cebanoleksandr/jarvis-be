@@ -47,4 +47,25 @@ describe('validateEnv', () => {
     const env = { ...valid, TOKEN_ENC_KEY: randomBytes(16).toString('base64') };
     expect(() => validateEnv(env)).toThrow(/TOKEN_ENC_KEY/);
   });
+
+  it('derives the app and callback URLs from RENDER_EXTERNAL_URL', () => {
+    const { GOOGLE_CALLBACK_URL: _, ...rest } = valid;
+    const origin = 'https://jarvis.onrender.com';
+    expect(validateEnv({ ...rest, RENDER_EXTERNAL_URL: origin })).toMatchObject(
+      {
+        FRONTEND_URL: origin,
+        GOOGLE_CALLBACK_URL: `${origin}/api/auth/google/callback`,
+      },
+    );
+  });
+
+  it('keeps explicit URLs over RENDER_EXTERNAL_URL', () => {
+    const env = validateEnv({
+      ...valid,
+      FRONTEND_URL: 'https://app.example.com',
+      RENDER_EXTERNAL_URL: 'https://jarvis.onrender.com',
+    });
+    expect(env.FRONTEND_URL).toBe('https://app.example.com');
+    expect(env.GOOGLE_CALLBACK_URL).toBe(valid.GOOGLE_CALLBACK_URL);
+  });
 });

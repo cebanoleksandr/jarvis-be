@@ -57,18 +57,35 @@ $ npm run test:e2e
 $ npm run test:cov
 ```
 
-## Deployment
+## Deployment (free: Render + Neon)
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+One Render web service serves the API and the frontend from the same origin,
+so the session cookie works on `*.onrender.com` without a custom domain. The
+Docker build downloads the frontend from the `main` branch of
+`cebanoleksandr/jarvis-fe`: push the frontend before deploying.
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
+1. **Neon**: create a project (region close to Frankfurt) and copy the
+   connection string (`...?sslmode=require`). Migrations run on start.
+2. **Render**: New -> Blueprint -> this repo. `render.yaml` creates the web
+   service `jarvis` and the Key Value `jarvis-redis`. Fill in `DATABASE_URL`,
+   `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `TOKEN_ENC_KEY`
+   (`openssl rand -base64 32`), `ANTHROPIC_API_KEY`, and optionally
+   `TRELLO_API_KEY`, `VITE_OPERATOR_NAME`, `VITE_PRIVACY_EMAIL`.
+   `FRONTEND_URL` and `GOOGLE_CALLBACK_URL` default to the service URL.
+3. **Google Cloud Console** -> the OAuth client: add the authorized redirect
+   URI `https://<service>.onrender.com/api/auth/google/callback` and the
+   JavaScript origin `https://<service>.onrender.com`.
+4. **Trello** (if used): add `https://<service>.onrender.com` to the
+   Power-Up's allowed origins.
+5. **Keep it awake**: a free service sleeps after 15 minutes without traffic,
+   and a sleeping service sends no briefings. Ping
+   `https://<service>.onrender.com/api/health/live` every 10 minutes from an
+   uptime monitor (cron-job.org, UptimeRobot). It does not query the database,
+   so Neon can still scale to zero. One service running all month fits the
+   750 free instance hours, as long as it is the only free service.
 
-```bash
-$ npm install -g @nestjs/mau
-$ mau deploy
-```
-
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
+A frontend change does not redeploy by itself: run Manual Deploy on Render (or
+call its deploy hook from the frontend repo).
 
 ## Observability
 
