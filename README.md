@@ -1,136 +1,203 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# Jarvis — API
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+A personal AI assistant in a chat. It knows your goals and notes, works with
+Google Calendar, Google Tasks and Trello, asks before changing anything, and
+writes morning, evening and weekly briefings on its own schedule.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+This repo is the NestJS backend. The web app lives in
+[jarvis-fe](https://github.com/cebanoleksandr/jarvis-fe). In production this
+service also serves the built web app (see [Deployment](#deployment)).
 
-## Description
+> "Jarvis" is a working title.
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+## How it works
 
-## Project setup
+- **Sign-in** with Google OAuth on the backend (offline access, PKCE). The
+  session is a JWT in an httpOnly cookie. Google and Trello tokens are stored
+  encrypted with AES-256-GCM.
+- **Agent loop**: the model replies, calls tools, gets the results and
+  continues. Replies stream to the browser over SSE. The model provider is
+  swappable: Anthropic (default) or OpenRouter.
+- **Tools** are declared once (name, zod schema, handler); the tool schema for
+  the model and the argument validation both come from that declaration. The
+  user id always comes from the session, never from model arguments.
+  - Read freely: `get_events`, `list_tasks`, `list_trello_boards`,
+    `list_trello_cards`.
+  - Change only after confirmation: `create_event`, `update_event`,
+    `delete_event`, `create_task`, `update_task`, `delete_task`,
+    `create_trello_card`, `update_trello_card`, `archive_trello_card`,
+    `comment_trello_card`.
+- **Confirmations**: a changing tool call is saved as a pending action and
+  shown as a card in the chat. It runs only after the user confirms. Some
+  actions keep a snapshot so they can be undone.
+- **Memory**: profile, goals (goal → project → task) and notes go into the
+  system prompt.
+- **Briefings** (morning, evening check-in, weekly review) run on BullMQ: each
+  user has one delayed job per briefing, due at their next local time.
+  Changing settings or time zone, or signing in, re-plans right away, and an
+  hourly job re-plans every active user. Each run is recorded in Postgres, so
+  a briefing is sent at most once, and lost Redis jobs are planned again.
+- **Account**: full data export and deletion, Trello included.
+
+## Stack
+
+NestJS 12 · TypeORM + PostgreSQL · BullMQ + Redis · zod · Anthropic SDK ·
+Google Calendar and Tasks APIs · Vitest · Node.js 22, native ESM
+
+## Getting started
+
+You need Node.js 22+ and Docker.
 
 ```bash
-$ npm install
+npm ci
+cp .env.example .env              # fill in the secrets, see below
+docker compose up -d postgres redis
+npm run start:dev                 # http://localhost:3000/api
 ```
 
-## Compile and run the project
+Postgres listens on host port 5435 and Redis on 6381, so they do not clash
+with other local instances. Migrations run on start.
 
-```bash
-# development
-$ npm run start
+Then start the web app from
+[jarvis-fe](https://github.com/cebanoleksandr/jarvis-fe) on
+`http://localhost:5173`.
 
-# watch mode
-$ npm run start:dev
+### Google OAuth client
 
-# production mode
-$ npm run start:prod
+In Google Cloud Console, enable the Google Calendar API and the Google Tasks
+API, and create an OAuth client of type "Web application" with:
+
+- Authorized JavaScript origin: `http://localhost:5173`
+- Authorized redirect URI: `http://localhost:3000/api/auth/google/callback`
+
+In testing mode only listed test users can sign in, and refresh tokens expire
+after about 7 days.
+
+### Trello (optional)
+
+Create a Power-Up at
+[trello.com/power-ups/admin](https://trello.com/power-ups/admin), put its API
+key into `TRELLO_API_KEY` and add the web app's origin to the key's allowed
+origins. Each user connects their own Trello account in settings. Without the
+key, Trello is hidden.
+
+## Environment
+
+Validated on start (`src/config/env.validation.ts`); the app does not start
+with a missing or malformed value.
+
+| Variable               | Required | Default                  | Purpose                                                          |
+| ---------------------- | -------- | ------------------------ | ---------------------------------------------------------------- |
+| `DATABASE_URL`         | yes      | —                        | Postgres connection string                                       |
+| `REDIS_URL`            |          | `redis://localhost:6381` | Redis for the briefing queue                                     |
+| `FRONTEND_URL`         |          | `http://localhost:5173`  | Web app origin: CORS, redirects after sign-in                    |
+| `GOOGLE_CLIENT_ID`     | yes      | —                        | Google OAuth client                                              |
+| `GOOGLE_CLIENT_SECRET` | yes      | —                        | Google OAuth client                                              |
+| `GOOGLE_CALLBACK_URL`  | yes      | —                        | `<api origin>/api/auth/google/callback`                          |
+| `TOKEN_ENC_KEY`        | yes      | —                        | 32 bytes, base64 (`openssl rand -base64 32`)                     |
+| `JWT_SECRET`           | yes      | —                        | At least 32 characters (`openssl rand -base64 48`)               |
+| `SESSION_TTL_DAYS`     |          | `7`                      | Session length                                                   |
+| `LLM_PROVIDER`         |          | `anthropic`              | `anthropic` or `openrouter`                                      |
+| `ANTHROPIC_API_KEY`    | for anthropic | —                   | Anthropic API key                                                |
+| `OPENROUTER_API_KEY`   | for openrouter | —                  | OpenRouter API key                                               |
+| `LLM_MODEL`            |          | per provider             | `claude-opus-5-5` (anthropic) or `openrouter/free`               |
+| `LLM_EFFORT`           |          | `medium`                 | `low`, `medium`, `high`, `xhigh` or `max`                        |
+| `LLM_MAX_TOKENS`       |          | `64000`                  | Reply token limit                                                |
+| `TRELLO_API_KEY`       |          | —                        | Enables Trello                                                   |
+| `SCHEDULER_ENABLED`    |          | `true`                   | Briefings (each run costs model tokens); always off in tests     |
+| `WEB_DIST`             |          | —                        | Built web app to serve (set by the Docker image)                 |
+| `PORT`                 |          | `3000`                   |                                                                  |
+| `DB_LOGGING`           |          | `false`                  | Log SQL                                                          |
+
+Keep `TOKEN_ENC_KEY` once set: changing it makes stored Google and Trello
+tokens unreadable, and users have to connect again.
+
+On Render, `FRONTEND_URL` and `GOOGLE_CALLBACK_URL` default to the service's
+own URL (`RENDER_EXTERNAL_URL`).
+
+## Scripts
+
+| Command                      | What it does                                                    |
+| ---------------------------- | --------------------------------------------------------------- |
+| `npm run start:dev`          | Run in watch mode                                               |
+| `npm run build`              | Build into `dist/`                                              |
+| `npm run start:prod`         | Run the build                                                   |
+| `npm test`                   | Unit tests                                                      |
+| `npm run test:e2e`           | End-to-end tests against the Postgres in `.env`; the Redis test is skipped when Redis is down |
+| `npm run lint`               | oxlint, type-aware                                              |
+| `npm run migration:generate -- src/database/migrations/<Name>` | Generate a migration from entity changes |
+| `npm run migration:run`      | Apply migrations by hand (the app also applies them on start)   |
+| `npm run migration:revert`   | Roll back the last migration                                    |
+
+Schema changes go through migrations only; `synchronize` is off.
+
+## Project structure
+
+```
+src/
+  auth/        Google sign-in, session cookie, guards
+  users/       Users, profile, schedule-change events
+  google/      Google tokens, Calendar and Tasks clients and endpoints
+  trello/      Trello connection, client, tools
+  agent/       Agent loop, tool registry, pending actions, Calendar/Tasks tools
+  llm/         Model providers (Anthropic, OpenRouter)
+  chat/        Conversations, messages, streaming, search
+  memory/      Goals and memory notes
+  scheduler/   Briefing timing, BullMQ queue, briefing runs, settings
+  account/     Data export and deletion
+  health/      Health checks
+  database/    TypeORM options and migrations
+  config/      Environment validation
+  web.ts       Serves the built web app from the same origin
+test/          End-to-end tests
 ```
 
-## Run tests
+## API overview
 
-```bash
-# unit tests
-$ npm run test
+All routes are under `/api` and need a session, except sign-in and health.
 
-# e2e tests
-$ npm run test:e2e
+| Routes                                            | What for                                         |
+| ------------------------------------------------- | ------------------------------------------------ |
+| `auth/google`, `auth/google/callback`, `auth/me`, `auth/logout` | Sign-in, current user, sign-out    |
+| `conversations`, `conversations/:id/messages`, `conversations/search` | Chats, streamed replies, search |
+| `conversations/:id/pending-actions`, `pending-actions/:id/{confirm,cancel,undo}` | Confirmations |
+| `profile`, `goals`, `memories`                    | Profile and memory                               |
+| `notifications`, `notifications/:kind/run`        | Briefing schedule, run a briefing now            |
+| `calendar/events`, `tasks`, `google/connection`   | Google data and connection                       |
+| `trello/connection`, `trello/cards/due`, `trello/cards/:id` | Trello connection and cards            |
+| `account`, `account/export`                       | Delete the account, export data                  |
+| `health`, `health/live`                           | Health with and without a database check         |
 
-# test coverage
-$ npm run test:cov
-```
+## Deployment
 
-## Deployment (free: Render + Neon)
+Free setup: Render (web service) + Neon (Postgres) + an existing Render Key
+Value (Redis).
 
-One Render web service serves the API and the frontend from the same origin,
+One Render web service serves the API and the web app from the same origin,
 so the session cookie works on `*.onrender.com` without a custom domain. The
-Docker build downloads the frontend from the `main` branch of
-`cebanoleksandr/jarvis-fe`: push the frontend before deploying.
+Docker build downloads `main` of
+[jarvis-fe](https://github.com/cebanoleksandr/jarvis-fe) and builds it with
+`VITE_API_URL=/api`, so push the web app before deploying.
 
 1. **Neon**: create a project (region close to Frankfurt) and copy the
-   connection string (`...?sslmode=require`). Migrations run on start.
-2. **Render**: New -> Blueprint -> this repo. `render.yaml` creates the web
-   service `jarvis`. Fill in `DATABASE_URL`, `REDIS_URL` (Internal URL of a
-   Key Value in the same region; its maxmemory policy must be `noeviction`),
-   `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `TOKEN_ENC_KEY`
-   (`openssl rand -base64 32`), `ANTHROPIC_API_KEY`, and optionally
-   `TRELLO_API_KEY`, `VITE_OPERATOR_NAME`, `VITE_PRIVACY_EMAIL`.
-   `FRONTEND_URL` and `GOOGLE_CALLBACK_URL` default to the service URL.
-3. **Google Cloud Console** -> the OAuth client: add the authorized redirect
-   URI `https://<service>.onrender.com/api/auth/google/callback` and the
+   connection string (`...?sslmode=require`).
+2. **Render**: New → Blueprint → this repo. `render.yaml` creates the web
+   service `jarvis`. In its Environment, set `DATABASE_URL`, `REDIS_URL`
+   (Internal URL of a Key Value in the same region with maxmemory policy
+   `noeviction`; a workspace gets one free Key Value), `GOOGLE_CLIENT_ID`,
+   `GOOGLE_CLIENT_SECRET`, `TOKEN_ENC_KEY`, `ANTHROPIC_API_KEY`, and
+   optionally `TRELLO_API_KEY`, `VITE_OPERATOR_NAME`, `VITE_PRIVACY_EMAIL`.
+   `JWT_SECRET` is generated.
+3. **Google Cloud Console**: add the redirect URI
+   `https://<service>.onrender.com/api/auth/google/callback` and the
    JavaScript origin `https://<service>.onrender.com`.
-4. **Trello** (if used): add `https://<service>.onrender.com` to the
-   Power-Up's allowed origins.
+4. **Trello** (if used): add `https://<service>.onrender.com` to the API
+   key's allowed origins.
 5. **Keep it awake**: a free service sleeps after 15 minutes without traffic,
    and a sleeping service sends no briefings. Ping
    `https://<service>.onrender.com/api/health/live` every 10 minutes from an
-   uptime monitor (cron-job.org, UptimeRobot). It does not query the database,
-   so Neon can still scale to zero. One service running all month fits the
-   750 free instance hours, as long as it is the only free service.
+   uptime monitor (cron-job.org, UptimeRobot). It does not touch the
+   database, so Neon can still scale to zero. The 750 free instance hours a
+   month are shared by all free services in the workspace.
 
-A frontend change does not redeploy by itself: run Manual Deploy on Render (or
-call its deploy hook from the frontend repo).
-
-## Observability
-
-In production applications, observability is essential for understanding how your system behaves, detecting issues early, and maintaining reliable performance.
-
-[NestJS Observe](https://observe.nestjs.com) automatically instruments your NestJS application, giving you deep visibility into your system with minimal setup:
-
-- **Distributed tracing:** Follow requests across services and understand how they flow through your system.
-- **Waterfall analysis:** Visualize request execution and identify slow operations, bottlenecks, and unexpected delays.
-- **Performance analysis:** Analyze application performance in real time and quickly pinpoint areas that need optimization.
-- **Metrics:** Track key application and infrastructure metrics to understand system health and performance trends.
-- **Logging:** Centralize and correlate logs with traces and other telemetry to make debugging easier.
-- **Error tracking:** Detect errors quickly and investigate their root causes with the surrounding context.
-- **SLA monitoring:** Track service-level objectives and identify when your application is approaching or exceeding defined thresholds.
-- **Alarms and alerts:** Set up alerts for critical errors, performance degradation, SLA violations, and other anomalies so your team can react quickly.
-
-This project is already instrumented. Create a free account at [observe.nestjs.com](https://observe.nestjs.com), add an application, and paste the generated app key and secret into the `ObserveModule.forRoot()` call in `src/app.module.ts`.
-
-The free plan needs no payment details and covers 300,000 events a month. You can also browse the [live demo](https://www.observe-demo.nestjs.com/dashboard) first - the whole dashboard over a busy service's data, with nothing to install.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Auto-instrument your application with [NestJS Observe](https://observe.nestjs.com). Distributed tracing, metrics, and logging made easy. Error tracking and performance monitoring for your NestJS applications.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+A web app change does not redeploy by itself: run Manual Deploy on Render.
